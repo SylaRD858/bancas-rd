@@ -89,7 +89,7 @@ class SupabaseStore {
 /* ======================= núcleo compartido (mismo código que el navegador) ======================= */
 const SS = new Map();
 const ctx = {
-  console, setTimeout, setInterval, clearTimeout, clearInterval, fetch, crypto: globalThis.crypto, TextEncoder, TextDecoder, Intl, URL,
+  console, setTimeout, setInterval, clearTimeout, clearInterval, fetch, crypto: globalThis.crypto || nodeCrypto.webcrypto, TextEncoder, TextDecoder, Intl, URL,
   navigator: { userAgent: 'BancaRD-server' }, location: { protocol: 'file:', pathname: '/server' },
   localStorage: { getItem: () => null, setItem() { }, removeItem() { } },
   sessionStorage: { getItem: k => (SS.has(k) ? SS.get(k) : null), setItem: (k, v) => SS.set(k, String(v)), removeItem: k => SS.delete(k) },
