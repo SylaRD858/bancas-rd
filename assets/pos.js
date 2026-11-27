@@ -1,5 +1,5 @@
 /* =========================================================
-   BancaRD — Punto de Venta (cajero / vendedor)
+   AuraSport — Punto de Venta (cajero / vendedor)
    ========================================================= */
 (async function () {
   const { U, DB, Auth, Lot, Sports, Tickets, Shifts, Scores, UI, KIND_NAMES, Inv, Requests, Issues } = BRD;
@@ -42,16 +42,17 @@
     const b = DB.get('bancas', u.bancaId) || {};
     const sh = shift();
     if (sh && sh.bancaId !== u.bancaId && Auth.sees(sh.bancaId, u)) { Auth.setPosBanca(sh.bancaId); return render(); }
+    BRD.Brand.refresh();
     root.innerHTML = `<div class="main" style="max-width:1400px;margin:auto">
       <div class="top">
-        <div class="row"><div class="brand" style="padding:0"><i>B</i>${U.esc(b.name || '')}</div>
+        <div class="row"><div class="brand" style="padding:0">${BRD.Brand.logoHTML({ bancaId: u.bancaId })}${U.esc(b.name || '')}</div>
           <span class="pill">${U.esc(b.code || '')}</span><span class="pill">👤 ${U.esc(u.name)}</span>
           ${sh ? `<span class="badge b-ok">Turno abierto ${U.time(sh.openedAt)}</span>` : '<span class="badge b-bad">Sin turno</span>'}
           <span class="pill" id="netpill" title="Conexión con el servidor">${DB.mode === 'servidor' ? (DB.online ? '🟢 En línea' : '🔴 Sin conexión') : '💾 Local'}</span>
         </div>
         <div class="row"><span class="clock" id="clock"></span>
           ${Auth.bancas(u).filter(x => x.status === 'activa').length > 1 && !sh ? '<button class="btn sm" id="swb">Cambiar banca</button>' : ''}${Auth.hasControl(u) ? '<a class="btn sm" href="control.html">Panel de control</a>' : ''}
-          <button class="btn sm" id="chpw">Clave</button><button class="btn sm" id="logout">Salir</button></div>
+          <button class="btn sm" id="devset" title="Tema e impresoras de este equipo">⚙️</button><button class="btn sm" id="chpw">Clave</button><button class="btn sm" id="logout">Salir</button></div>
       </div>
       <div class="tabs">
         ${[['loteria', '🎱 Lotería'], ['deporte', '🏟️ Deportes'], ['pagar', '💵 Pagar ticket'], ['tickets', '🧾 Mis tickets'], ['resultados', '📊 Resultados'], ['caja', '💰 Caja / Cuadre']].concat(Auth.can('inventory.view') || Auth.can('requests.create') ? [['inventario', '📦 Inventario' + (Inv.lowAt(u.bancaId).length || DB.all('requests').some(r => r.bancaId === u.bancaId && r.status === 'despachado') ? ' •' : '')]] : []).concat(Auth.can('issues.create') ? [['soporte', '🛠️ Reportar error']] : [])
@@ -61,7 +62,7 @@
     root.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { S.tab = x.dataset.tab; render(); });
     UI.$('#logout').onclick = async () => { if (S.lotLines.length || S.legs.length) { if (!await UI.confirm('Hay jugadas sin vender. ¿Salir?')) return; } Auth.logout(); start(); };
     const swb = UI.$('#swb'); if (swb) swb.onclick = () => { Auth.setPosBanca(''); S.lotLines = []; S.legs = []; pickBanca(me()); };
-    UI.$('#chpw').onclick = () => BRD.changePassword(u);
+    UI.$('#devset').onclick = () => BRD.Brand.deviceModal(); UI.$('#chpw').onclick = () => BRD.changePassword(u);
     tick();
     const v = UI.$('#view');
     if (!sh && (S.tab === 'loteria' || S.tab === 'deporte' || S.tab === 'pagar')) return viewNoShift(v);
@@ -338,7 +339,7 @@
       <button class="btn" id="cpy">Copiar</button><button class="btn ghost" data-close>Cerrar</button></div>`);
     m.querySelector('#pr').onclick = () => BRD.printTicket(t);
     m.querySelector('#cpy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(BRD.ticketText(t)).then(() => UI.toast('Copiado')); };
-    if (print) BRD.printTicket(t);
+    if (print && BRD.Brand.Device.get().autoPrint !== false) BRD.printTicket(t);
   }
 
   /* ---------------- PAGAR ---------------- */
@@ -429,25 +430,19 @@
   }
   function histTable(hist) {
     return `<div class="card" style="margin-top:12px"><h3>Turnos anteriores</h3><table><thead><tr><th>Apertura</th><th>Cierre</th><th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Esperado</th><th class="num">Declarado</th><th class="num">Diferencia</th><th></th></tr></thead><tbody>
-      ${hist.map(s => `<tr><td>${U.dt(s.openedAt)}</td><td>${U.dt(s.closedAt)}</td><td class="num">${U.money(s.resumen.ventas)}</td><td class="num">${U.money(s.resumen.pagos)}</td><td class="num">${U.money(s.resumen.esperado)}</td><td class="num">${U.money(s.declarado)}</td><td class="num" style="color:${s.diferencia < 0 ? 'var(--bad)' : 'var(--ac)'}">${U.money(s.diferencia)}</td><td><button class="btn sm" data-ps="${s.id}">Imprimir</button></td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin turnos cerrados</td></tr>'}</tbody></table></div>`;
+      ${hist.map(s => `<tr><td>${U.dt(s.openedAt)}</td><td>${U.dt(s.closedAt)}</td><td class="num">${U.money(s.resumen.ventas)}</td><td class="num">${U.money(s.resumen.pagos)}</td><td class="num">${U.money(s.resumen.esperado)}</td><td class="num">${U.money(s.declarado)}</td><td class="num" style="color:${s.diferencia < 0 ? 'var(--bad)' : 'var(--ac)'}">${U.money(s.diferencia)}</td><td><button class="btn sm" data-ps="${s.id}">🧾 Térmica</button><button class="btn sm" data-pc="${s.id}">🖨️ Carta</button><button class="btn sm" data-pf="${s.id}">📄 PDF</button></td></tr>`).join('') || '<tr><td colspan="8" class="mut">Sin turnos cerrados</td></tr>'}</tbody></table></div>`;
   }
-  function bindHist(v) { v.querySelectorAll('[data-ps]').forEach(x => x.onclick = () => printShift(DB.get('shifts', x.dataset.ps))); }
-  function printShift(s) {
-    const r = s.resumen || Shifts.summary(s); const b = DB.get('bancas', s.bancaId) || {}; const cfg = DB.cfg();
-    let el = document.getElementById('print-area'); if (!el) { el = document.createElement('div'); el.id = 'print-area'; document.body.appendChild(el); }
-    const row = (a, b) => `<div class="tk-row"><span>${a}</span><span>${b}</span></div>`;
-    el.innerHTML = `<div class="ticket"><div class="tk-c tk-h">${U.esc(cfg.company)}</div><div class="tk-c">CUADRE DE CAJA</div><div class="tk-c">${U.esc(b.name || '')}</div><div class="tk-hr"></div>
-      ${row('Cajero', U.esc(s.userName))}${row('Apertura', U.dt(s.openedAt))}${row('Cierre', U.dt(s.closedAt))}<div class="tk-hr"></div>
-      ${row('Fondo', U.money(s.fondo))}${row('Ventas lotería', U.money(r.ventasLot))}${row('Ventas deportes', U.money(r.ventasDep))}${row('Total ventas', U.money(r.ventas))}${row('Tickets', r.tickets)}${row('Anulados', r.anulados + ' / ' + U.money(r.montoAnulado))}${row('Premios pagados', U.money(r.pagos))}${row('Gastos', U.money(r.gastos))}<div class="tk-hr"></div>
-      ${row('<b>ESPERADO</b>', '<b>' + U.money(r.esperado) + '</b>')}${row('Declarado', U.money(s.declarado))}${row('<b>DIFERENCIA</b>', '<b>' + U.money(s.diferencia) + '</b>')}
-      <br><br><div class="tk-c">______________________<br>Firma cajero</div></div>`;
-    setTimeout(() => window.print(), 50);
+  function bindHist(v) {
+    v.querySelectorAll('[data-ps]').forEach(x => x.onclick = () => printShift(DB.get('shifts', x.dataset.ps)));
+    v.querySelectorAll('[data-pc]').forEach(x => x.onclick = () => BRD.Docs.print(BRD.Docs.shiftSpec(DB.get('shifts', x.dataset.pc))));
+    v.querySelectorAll('[data-pf]').forEach(x => x.onclick = () => { const s = DB.get('shifts', x.dataset.pf); BRD.Docs.pdf(BRD.Docs.shiftSpec(s), 'cierre_' + U.d(s.openedAt) + '_' + s.userName); });
   }
+  function printShift(s) { BRD.printHTML(BRD.Docs.shiftThermal(s), 'termica'); }
 
   /* ---------------- INVENTARIO (banca) ---------------- */
   function viewInventory(v) {
     const u = me(); const b = u.bancaId;
-    const items = DB.all('items').filter(i => i.active !== false).sort((a, c) => (a.category || '').localeCompare(c.category || '') || a.name.localeCompare(c.name));
+    const items = Inv.itemsFor(b);
     const reqs = DB.all('requests').filter(r => r.bancaId === b).sort((a, c) => c.at - a.at).slice(0, 20);
     const arriving = reqs.filter(r => r.status === 'despachado');
     v.innerHTML = `${arriving.length ? `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><b>🚚 Material en camino:</b> ${arriving.map(r => `<button class="btn sm pri" data-o="${r.id}">${U.esc(r.code)} — confirmar recibido</button>`).join(' ')}</div>` : ''}

@@ -1,4 +1,4 @@
-# BancaRD — Sistema para bancas de lotería y deportes (RD)
+# AuraSport — Sistema para bancas de lotería y deportes (RD)
 
 | Módulo | Archivo | Para quién |
 |---|---|---|

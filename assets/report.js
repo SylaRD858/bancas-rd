@@ -1,7 +1,13 @@
 /* Informe del sistema — se muestra en Panel de Control › Informe */
 window.BRD = window.BRD || {};
 BRD.REPORT_HTML = `
-<h2>Informe del sistema BancaRD v2.0</h2>
+<h2>Informe del sistema AuraSport v3.0</h2>
+<h3>Novedades v3.0</h3><ul>
+<li><b>Consorcios:</b> nueva capa superior. La plataforma crea el consorcio y luego sus bancas y empleados. Cada consorcio solo ve lo suyo (bancas, staff, tickets, inventario, topes). El rol <b>Administrador de consorcio</b> maneja todo su consorcio; resultados, juegos, loterías y configuración general quedan en la plataforma.</li>
+<li><b>Marca:</b> logo del consorcio aplicado a sus bancas, recibos e informes; cada banca puede tener su logo propio. Paquete de 11 temas de color (por consorcio, por banca y por equipo).</li>
+<li><b>Factura / recibo:</b> plantilla en el consorcio (encabezado, pie, texto legal, campos visibles, papel 58/80 mm, tamaño de letra) con vista previa; cada banca puede personalizarla.</li>
+<li><b>Dos impresoras:</b> recibos y cierres en la térmica; reportes, cierres, listados, inventario y resultados en impresora normal (carta/A4) o como <b>PDF</b> descargable. Ajustes por equipo en "Apariencia e impresoras" (panel) y ⚙️ (venta).</li>
+<li>Almacén central por consorcio, artículos propios del consorcio y topes por consorcio.</li></ul>
 <p class="mut">Sistema web para consorcios de bancas de lotería y apuestas deportivas en República Dominicana. Dos aplicaciones: <b>App de venta</b> (pos.html) y <b>Panel de control</b> (control.html), que comparten los mismos datos.</p>
 
 <h3>1. Lo que pediste y cómo quedó</h3>

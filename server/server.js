@@ -1,5 +1,5 @@
 /*
- * BancaRD — Servidor central SEGURO (Node.js 18+, sin dependencias)
+ * AuraSport — Servidor central SEGURO (Node.js 18+, sin dependencias)
  * ---------------------------------------------------------------
  *  - Inicio de sesión con contraseña (scrypt) y token de sesión (12 h).
  *  - El servidor es la única fuente de verdad: valida cada venta, pago,
@@ -90,7 +90,7 @@ class SupabaseStore {
 const SS = new Map();
 const ctx = {
   console, setTimeout, setInterval, clearTimeout, clearInterval, fetch, crypto: globalThis.crypto || nodeCrypto.webcrypto, TextEncoder, TextDecoder, Intl, URL,
-  navigator: { userAgent: 'BancaRD-server' }, location: { protocol: 'file:', pathname: '/server' },
+  navigator: { userAgent: 'AuraSport-server' }, location: { protocol: 'file:', pathname: '/server' },
   localStorage: { getItem: () => null, setItem() { }, removeItem() { } },
   sessionStorage: { getItem: k => (SS.has(k) ? SS.get(k) : null), setItem: (k, v) => SS.set(k, String(v)), removeItem: k => SS.delete(k) },
   addEventListener() { }, __ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
@@ -141,17 +141,23 @@ setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.so
 function visible(u, c, rec) {
   if (rec._deleted) return true;
   const can = p => Auth.can(p, u), sees = id => Auth.sees(id, u), all = Auth.allBancas(u);
+  const plat = Auth.isPlatform(u), myC = u.consorcioId || '', inC = cid => plat || cid === myC;
+  const cenOk = l => l === 'central' ? plat : inC(l.slice(4));
+  const invView = () => can('inventory.view') || can('requests.create') || can('requests.approve');
   switch (c) {
-    case 'config': case 'roles': case 'lotteries': case 'results': case 'leagues': case 'games': case 'items': case 'locations': return true;
+    case 'config': case 'lotteries': case 'results': case 'leagues': case 'games': case 'locations': return true;
+    case 'roles': case 'items': return !rec.consorcioId || inC(rec.consorcioId);
+    case 'consorcios': return inC(rec.id);
     case 'bancas': return sees(rec.id);
-    case 'users': return rec.id === u.id || all || ((can('staff.view') || can('issues.manage') || can('requests.approve')) && Auth.userBancas(rec).some(sees));
+    case 'users': return rec.id === u.id || (plat ? (all || ((can('staff.view') || can('issues.manage') || can('requests.approve')) && Auth.userBancas(rec).some(sees)))
+      : (rec.consorcioId === myC && (all || ((can('staff.view') || can('issues.manage') || can('requests.approve')) && Auth.userBancas(rec).some(sees)))));
     case 'tickets': case 'shifts': case 'expenses': return sees(rec.bancaId);
-    case 'limits': return rec.scope === 'global' || sees(rec.scope);
-    case 'audit': return (can('audit.view') && (rec.bancaId ? sees(rec.bancaId) : all)) || rec.userId === u.id;
-    case 'stock': return rec.loc === 'central' ? (can('inventory.view') || can('requests.create') || can('requests.approve')) : sees(rec.loc);
-    case 'movements': return [rec.from, rec.to].some(l => l && l !== 'central' && sees(l)) || (all && can('inventory.view'));
+    case 'limits': return rec.scope === 'global' || (String(rec.scope).startsWith('c:') ? inC(rec.scope.slice(2)) : sees(rec.scope));
+    case 'audit': return (can('audit.view') && (rec.bancaId ? sees(rec.bancaId) : (plat ? all : (all && rec.consorcioId === myC)))) || rec.userId === u.id;
+    case 'stock': return BRD.Inv.isCentral(rec.loc) ? (cenOk(rec.loc) && invView()) : sees(rec.loc);
+    case 'movements': return [rec.from, rec.to].some(l => l && !BRD.Inv.isCentral(l) && sees(l)) || (can('inventory.view') && all && [rec.from, rec.to].some(l => l && BRD.Inv.isCentral(l) && cenOk(l)));
     case 'requests': return sees(rec.bancaId);
-    case 'issues': return rec.by === u.username || (rec.bancaId ? sees(rec.bancaId) : (all && can('issues.manage')));
+    case 'issues': return rec.by === u.username || (rec.bancaId ? sees(rec.bancaId) : (all && can('issues.manage') && (plat || rec.consorcioId === myC)));
     case 'syserrors': return can('syserrors');
   }
   return false;
@@ -168,7 +174,18 @@ const deny = msg => { throw new Deny(msg); };
 const str = (v, n = 200) => String(v == null ? '' : v).slice(0, n);
 const num = v => { const n = Number(v); if (!isFinite(n)) deny('Número inválido'); return n; };
 const ISSUE_ST = ['abierto', 'en_proceso', 'resuelto', 'cerrado'];
-const ADMIN_COLLS = { config: 'config', roles: 'roles', lotteries: 'lotteries', leagues: 'games', games: 'games', results: 'results', items: 'inventory.edit', locations: 'config', limits: 'limits', bancas: 'bancas.edit' };
+const PLATFORM_COLLS = ['config', 'lotteries', 'leagues', 'games', 'results', 'locations'];
+const THEME_IDS = ['aurasport', 'verde', 'medianoche', 'carbon_oro', 'esmeralda', 'rubi', 'oceano', 'neon', 'claro', 'arena', 'dominicana'];
+const logoOk = v => { v = str(v, 400000); if (v && !/^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/.test(v)) deny('Logo inválido'); return v; };
+function cleanInvoice(o) {
+  o = o && typeof o === 'object' ? o : {}; const x = {};
+  if (o.paper) x.paper = o.paper === '58' ? '58' : '80';
+  if (o.fontSize) x.fontSize = ['pequena', 'normal', 'grande'].includes(o.fontSize) ? o.fontSize : 'normal';
+  ['title', 'header', 'footer', 'legal'].forEach(k => { if (o[k] != null) x[k] = str(o[k], k === 'title' ? 60 : 400); });
+  ['showLogo', 'showName', 'showRnc', 'showAddress', 'showPhone', 'showSeller', 'showPin', 'showBarcode', 'showDate', 'showSerial', 'custom'].forEach(k => { if (o[k] != null) x[k] = !!o[k]; });
+  return x;
+}
+const ADMIN_COLLS = { consorcios: 'consorcio', config: 'config', roles: 'roles', lotteries: 'lotteries', leagues: 'games', games: 'games', results: 'results', items: 'inventory.edit', locations: 'config', limits: 'limits', bancas: 'bancas.edit' };
 
 function legFrom(g, m, s) {
   const o = g.odds || {}; let odds = null, line = null;
@@ -188,6 +205,7 @@ function applyPut(u, c, rec) {
   rec = plain(rec || {});
   if (!rec.id || typeof rec.id !== 'string' || rec.id.length > 100) deny('Registro inválido');
   const can = p => Auth.can(p, u), sees = id => Auth.sees(id, u), all = Auth.allBancas(u);
+  const plat = Auth.isPlatform(u), myC = u.consorcioId || '', inC = cid => plat || cid === myC;
   const cur = DB.get(c, rec.id); const del = !!rec._deleted;
   const now = Date.now();
 
@@ -196,17 +214,38 @@ function applyPut(u, c, rec) {
 
   /* --- colecciones administrativas --- */
   if (ADMIN_COLLS[c]) {
-    if (!can(ADMIN_COLLS[c])) deny('No tiene permiso para modificar ' + c);
+    if (!can(ADMIN_COLLS[c]) && !(c === 'consorcios' && plat && can('bancas.edit'))) deny('No tiene permiso para modificar ' + c);
+    if (PLATFORM_COLLS.includes(c) && !plat) deny('Solo la plataforma puede modificar ' + c);
+    if (c === 'consorcios') {
+      if (del) deny('Los consorcios no se eliminan; suspéndalos');
+      if (!cur && !(plat && (can('bancas.edit') || can('*')))) deny('Solo la plataforma puede crear consorcios');
+      if (!inC(rec.id)) deny('Consorcio fuera de su alcance');
+      const code = str(rec.code, 6).toUpperCase().replace(/[^A-Z0-9]/g, '') || (cur && cur.code); if (!code) deny('Código inválido');
+      if (DB.all('consorcios').some(x => x.code === code && x.id !== rec.id)) deny('Ese código de consorcio ya existe');
+      const name = str(rec.name, 80).trim(); if (!name) deny('Falta el nombre');
+      const keep = (k, f) => rec[k] === undefined && cur ? cur[k] : f(rec[k]);
+      return { put: Object.assign({}, cur || { createdAt: now }, {
+        id: rec.id, code: plat ? code : cur.code, name, rnc: keep('rnc', v => str(v, 20)), phone: keep('phone', v => str(v, 30)), address: keep('address', v => str(v, 160)), email: keep('email', v => str(v, 80)),
+        status: plat ? (rec.status === undefined && cur ? cur.status : rec.status === 'suspendido' ? 'suspendido' : 'activo') : cur.status,
+        logo: keep('logo', logoOk), theme: keep('theme', v => THEME_IDS.includes(v) ? v : 'aurasport'), invoice: keep('invoice', cleanInvoice),
+      }) };
+    }
+    if (c === 'items') {
+      const t = cur || Object.assign({}, rec, { consorcioId: plat ? rec.consorcioId : myC });
+      if (!inC(t.consorcioId || '') || (!plat && !t.consorcioId)) deny('Este artículo es del catálogo general; solo la plataforma lo edita');
+      return { put: del ? { id: rec.id, _deleted: true } : Object.assign({}, cur, rec, { consorcioId: plat ? str(rec.consorcioId, 60) : myC }) };
+    }
     if (c === 'config') { if (del || rec.id !== 'main') deny('Configuración inválida'); return { put: Object.assign({}, cur, rec) }; }
     if (c === 'roles') {
       const target = cur || rec;
       if (target.system || (cur && cur.perms.includes('*'))) deny('El rol Administrador no se puede modificar');
+      if (!plat && !(cur ? cur.consorcioId === myC : true)) deny('Este rol es general; cree uno propio para su consorcio');
       if (u.role === rec.id && !can('*')) deny('No puede modificar su propio rol');
       if (del) { if (DB.all('users').some(x => x.role === rec.id)) deny('Hay usuarios con este rol'); return { put: { id: rec.id, _deleted: true } }; }
       const perms = (rec.perms || []).filter(p => Auth.ALL_PERMS.includes(p));
       if (!can('*') && perms.some(p => !can(p))) deny('No puede otorgar permisos que usted no tiene');
       if (rec.scope === 'all' && !all) deny('No puede crear roles con acceso a todas las bancas');
-      return { put: { id: rec.id, name: str(rec.name, 60), desc: str(rec.desc, 200), scope: rec.scope === 'all' ? 'all' : 'assigned', perms, order: num(rec.order || 10) } };
+      return { put: { id: rec.id, name: str(rec.name, 60), desc: str(rec.desc, 200), scope: rec.scope === 'all' ? 'all' : 'assigned', perms: plat ? perms : perms.filter(p => !Auth.PLATFORM_PERMS.includes(p)), order: num(rec.order || 10), consorcioId: plat ? (cur ? cur.consorcioId || '' : str(rec.consorcioId, 60)) : myC } };
     }
     if (c === 'bancas') {
       if (del) deny('Las bancas no se eliminan; suspéndalas');
@@ -214,11 +253,16 @@ function applyPut(u, c, rec) {
       if (cur && !sees(cur.id)) deny('Banca fuera de su alcance');
       const code = str(rec.code, 6).toUpperCase().replace(/[^A-Z0-9]/g, ''); if (!code) deny('Código inválido');
       if (DB.all('bancas').some(b => b.code === code && b.id !== rec.id)) deny('Ese código de banca ya existe');
-      return { put: Object.assign({}, cur || { createdAt: now }, rec, { code, serial: cur ? (cur.serial || 0) : 0, status: rec.status === 'activa' ? 'activa' : 'suspendida', dailyLimit: Math.max(0, num(rec.dailyLimit || 0)) }) };
+      const consorcioId = plat ? str(rec.consorcioId || (cur && cur.consorcioId), 60) : myC;
+      if (!DB.get('consorcios', consorcioId)) deny('Seleccione el consorcio de la banca');
+      if (cur && cur.consorcioId && cur.consorcioId !== consorcioId && !plat) deny('No puede mover la banca a otro consorcio');
+      return { put: Object.assign({}, cur || { createdAt: now }, rec, { code, consorcioId, serial: cur ? (cur.serial || 0) : 0, status: rec.status === 'activa' ? 'activa' : 'suspendida', dailyLimit: Math.max(0, num(rec.dailyLimit || 0)),
+        logo: rec.logo === undefined && cur ? cur.logo || '' : logoOk(rec.logo), theme: rec.theme === undefined && cur ? cur.theme || '' : THEME_IDS.includes(rec.theme) ? rec.theme : '', invoice: rec.invoice === undefined && cur ? cur.invoice || {} : cleanInvoice(rec.invoice) }) };
     }
     if (c === 'limits') {
       const scope = (cur || rec).scope;
-      if (scope === 'global' ? !all : !sees(scope)) deny('Tope fuera de su alcance');
+      const cs = String(scope).startsWith('c:');
+      if (scope === 'global' ? !(plat && all) : cs ? !(all && inC(scope.slice(2)) && DB.get('consorcios', scope.slice(2))) : !sees(scope)) deny('Tope fuera de su alcance');
       if (cur && !del && rec.scope !== scope) deny('No puede cambiar el alcance');
       if (del) return { put: { id: rec.id, _deleted: true } };
       return { put: Object.assign({}, rec, { max: Math.max(0, num(rec.max || 0)), by: u.username }) };
@@ -250,8 +294,14 @@ function applyPut(u, c, rec) {
       const adminEditor = can('*');
       if (cur && Auth.can('*', cur) && !adminEditor) deny('Solo un administrador puede editar a otro administrador');
       if (cur && cur.id !== u.id && !all && !Auth.userBancas(cur).some(sees)) deny('Usuario fuera de su alcance');
+      if (cur && !plat && cur.consorcioId !== myC) deny('Usuario fuera de su alcance');
+      const consorcioId = plat ? str(rec.consorcioId != null ? rec.consorcioId : (cur && cur.consorcioId), 60) : myC;
+      if (consorcioId && !DB.get('consorcios', consorcioId)) deny('Consorcio inválido');
+      if (consorcioId && role.perms.includes('*')) deny('El rol Administrador de plataforma no se asigna a usuarios de un consorcio; use "Administrador de consorcio"');
+      if (role.consorcioId && role.consorcioId !== consorcioId) deny('Ese rol pertenece a otro consorcio');
+      if (cur && cur.id === u.id && consorcioId !== (cur.consorcioId || '')) deny('No puede cambiar su propio consorcio');
       if (!adminEditor && (role.perms.includes('*') || role.perms.some(p => !can(p)) || (role.scope === 'all' && !all))) deny('No puede asignar un rol con más permisos que el suyo');
-      const wanted = Array.isArray(rec.bancaIds) ? rec.bancaIds.filter(id => DB.get('bancas', id)) : [];
+      const wanted = Array.isArray(rec.bancaIds) ? rec.bancaIds.filter(id => { const b = DB.get('bancas', id); return b && (!consorcioId || b.consorcioId === consorcioId); }) : [];
       const hidden = cur ? Auth.userBancas(cur).filter(id => !sees(id)) : [];
       const bancaIds = [...new Set(hidden.concat(wanted.filter(sees)))];
       if (role.scope !== 'all' && !bancaIds.length) deny('Asigne al menos una banca');
@@ -260,7 +310,7 @@ function applyPut(u, c, rec) {
       if (!/^[a-z0-9._-]{3,40}$/.test(username)) deny('Usuario inválido (3 a 40 letras, números, punto, guion)');
       if (!cur && DB.all('users').some(x => x.username === username)) deny('Ese usuario ya existe');
       return { put: Object.assign({}, cur || { createdAt: now, pass: '', mustChange: true }, {
-        id: rec.id, username, name: str(rec.name, 80), role: role.id, bancaIds, cedula: str(rec.cedula, 20), phone: str(rec.phone, 20),
+        id: rec.id, username, name: str(rec.name, 80), role: role.id, bancaIds, consorcioId, cedula: str(rec.cedula, 20), phone: str(rec.phone, 20),
         commission: Math.max(0, Math.min(50, num(rec.commission || 0))), active: rec.active !== false,
       }) };
     }
@@ -309,7 +359,7 @@ function applyPut(u, c, rec) {
       if (cur || del) deny('Los movimientos no se modifican');
       const it = DB.get('items', rec.itemId); if (!it) deny('Artículo inválido');
       const qty = num(rec.qty); const from = rec.from || '', to = rec.to || '';
-      const locOk = l => l === 'central' ? all : !!(DB.get('bancas', l) && sees(l));
+      const locOk = l => BRD.Inv.isCentral(l) ? (l === 'central' ? plat && all : (all && inC(l.slice(4)) && !!DB.get('consorcios', l.slice(4)))) : !!(DB.get('bancas', l) && sees(l));
       const t = rec.type;
       if (t === 'consumo') { if (!can('inventory.use') || !locOk(from) || to) deny('No puede registrar consumo aquí'); }
       else if (t === 'entrada') { if (!can('inventory.edit') || from || !locOk(to)) deny('Sin permiso para registrar entradas'); }
@@ -317,7 +367,7 @@ function applyPut(u, c, rec) {
       else if (t === 'ajuste') { if (!can('inventory.edit') || !locOk(to)) deny('Sin permiso de ajuste'); }
       else if (t === 'despacho') {
         const r = DB.all('requests').find(x => x.code === rec.ref);
-        if (!r || !['pendiente', 'aprobado'].includes(r.status) || !can('requests.approve') || !sees(r.bancaId) || from !== 'central' || to) deny('Despacho inválido');
+        if (!r || !['pendiente', 'aprobado'].includes(r.status) || !can('requests.approve') || !sees(r.bancaId) || from !== BRD.Inv.centralForBanca(r.bancaId) || to) deny('Despacho inválido');
         const line = r.lines.find(l => l.itemId === it.id); if (!line) deny('Artículo no está en el pedido');
         const sent = DB.all('movements').filter(m => m.type === 'despacho' && m.ref === r.code && m.itemId === it.id).reduce((a, m) => a + m.qty, 0);
         if (sent + qty > line.qty) deny('No puede enviar más de lo pedido');
@@ -367,10 +417,10 @@ function applyPut(u, c, rec) {
       if (del) deny('No permitido');
       if (!cur) {
         if (!can('issues.create') && !can('issues.manage')) deny('Sin permiso para reportar');
-        if (rec.bancaId ? !(DB.get('bancas', rec.bancaId) && sees(rec.bancaId)) : !all) deny('Banca fuera de su alcance');
+        if (rec.bancaId && !(DB.get('bancas', rec.bancaId) && sees(rec.bancaId))) deny('Banca fuera de su alcance');
         const photo = typeof rec.photo === 'string' && rec.photo.startsWith('data:image/jpeg;base64,') && rec.photo.length < 900000 ? rec.photo : '';
         const code = 'ERR-' + String(DB.all('issues').length + 1).padStart(4, '0');
-        return { put: { id: rec.id, code, bancaId: rec.bancaId || '', by: u.username, byName: u.name, at: now, status: 'abierto', comments: [], assignedTo: '', category: str(rec.category, 20), priority: ['baja', 'media', 'alta', 'urgente'].includes(rec.priority) ? rec.priority : 'media', title: str(rec.title, 90), description: str(rec.description, 3000), ticketCode: str(rec.ticketCode, 30), photo, page: str(rec.page, 40) } };
+        return { put: { id: rec.id, code, bancaId: rec.bancaId || '', consorcioId: rec.bancaId ? ((DB.get('bancas', rec.bancaId) || {}).consorcioId || '') : myC, by: u.username, byName: u.name, at: now, status: 'abierto', comments: [], assignedTo: '', category: str(rec.category, 20), priority: ['baja', 'media', 'alta', 'urgente'].includes(rec.priority) ? rec.priority : 'media', title: str(rec.title, 90), description: str(rec.description, 3000), ticketCode: str(rec.ticketCode, 30), photo, page: str(rec.page, 40) } };
       }
       if (!visible(u, 'issues', cur)) deny('Reporte fuera de su alcance');
       const manage = can('issues.manage') && (cur.bancaId ? sees(cur.bancaId) : all);
@@ -393,7 +443,7 @@ function applyPut(u, c, rec) {
     }
     case 'audit': {
       if (cur || del) return { ignore: true };
-      return { put: { id: rec.id, at: now, user: u.username, userId: u.id, bancaId: rec.bancaId && sees(rec.bancaId) ? rec.bancaId : '', action: str(rec.action, 60), detail: str(rec.detail, 500), extra: null } };
+      return { put: { id: rec.id, at: now, user: u.username, userId: u.id, consorcioId: myC, bancaId: rec.bancaId && sees(rec.bancaId) ? rec.bancaId : '', action: str(rec.action, 60), detail: str(rec.detail, 500), extra: null } };
     }
   }
   deny('Operación no permitida');
@@ -402,6 +452,7 @@ function applyPut(u, c, rec) {
 function newTicket(u, rec) {
   if (!Auth.can('pos', u)) deny('Sin permiso de venta');
   const b = DB.get('bancas', rec.bancaId); if (!b || !Auth.sees(b.id, u)) deny('Banca fuera de su alcance'); if (b.status !== 'activa') deny('La banca está suspendida');
+  const cz = DB.get('consorcios', b.consorcioId); if (cz && cz.status === 'suspendido') deny('El consorcio está suspendido');
   const sh = BRD.Shifts.current(u); if (!sh || sh.bancaId !== b.id || rec.shiftId !== sh.id) deny('Debe tener un turno abierto en esta banca');
   if (!new RegExp('^' + b.code + '-[A-Z2-9]{8}$').test(rec.code || '') || DB.all('tickets').some(t => t.code === rec.code)) deny('Código de ticket inválido');
   if (!/^\d{4}$/.test(rec.pin || '')) deny('PIN inválido');
@@ -493,6 +544,7 @@ async function handleApi(req, res, url) {
     }
     const ids = Auth.userBancas(u);
     if (Auth.role(u).scope !== 'all' && ids.length && ids.every(id => { const x = DB.get('bancas', id); return x && x.status !== 'activa'; })) return send(res, 403, { error: 'Sus bancas están suspendidas.' });
+    const czL = u.consorcioId && DB.get('consorcios', u.consorcioId); if (czL && czL.status === 'suspendido') return send(res, 403, { error: 'El consorcio está suspendido. Contacte a soporte.' });
     const upd = Object.assign({}, u, { fails: 0, lockedUntil: 0, lastLogin: Date.now() });
     if (!u.pass.startsWith('scrypt$')) upd.pass = hashPw(b.password); // actualiza contraseñas antiguas
     DB.put('users', upd, { silent: true });
@@ -512,7 +564,7 @@ async function handleApi(req, res, url) {
     if (!target) return send(res, 404, { error: 'Usuario no existe' });
     if (pw.length < (Auth.hasControl(target) ? 6 : 4) || pw.length > 100) return send(res, 400, { error: 'Contraseña muy corta' });
     const self = target.id === u.id;
-    const allowed = self || asUser(u, null, me => Auth.can('staff.edit', me) && (Auth.allBancas(me) || Auth.userBancas(target).some(id => Auth.sees(id, me))) && (!Auth.can('*', target) || Auth.can('*', me)));
+    const allowed = self || asUser(u, null, me => Auth.can('staff.edit', me) && (Auth.isPlatform(me) || target.consorcioId === me.consorcioId) && (Auth.allBancas(me) || Auth.userBancas(target).some(id => Auth.sees(id, me))) && (!Auth.can('*', target) || Auth.can('*', me)));
     if (!allowed) return send(res, 403, { error: 'No puede cambiar esa contraseña' });
     DB.put('users', Object.assign({}, target, { pass: hashPw(pw), mustChange: self ? false : Auth.hasControl(target), fails: 0, lockedUntil: 0 }), { silent: true });
     if (!self) for (const k in sessions) if (sessions[k].userId === target.id) delete sessions[k]; // cierra sus sesiones abiertas
@@ -541,7 +593,7 @@ async function handleApi(req, res, url) {
     const st = DB.state(); const data = {};
     for (const c of DB.COLLS) data[c] = Object.fromEntries(Object.entries(st[c] || {}).map(([k, v]) => [k, c === 'users' ? sanitize(u, 'users', v) : v]));
     asUser(u, null, () => DB.log('respaldo.descargado', 'servidor'));
-    return send(res, 200, { app: 'BancaRD', version: DB.VERSION, exportedAt: new Date().toISOString(), data });
+    return send(res, 200, { app: 'AuraSport', version: DB.VERSION, exportedAt: new Date().toISOString(), data });
   }
   if (p === 'ticket') {
     const code = str(url.searchParams.get('code'), 30).toUpperCase();
@@ -629,7 +681,7 @@ const server = http.createServer(async (req, res) => {
   }
   setInterval(() => { try { BRD.gradeAll(); } catch (e) { console.error('grade', e.message); } }, 30000);
   BRD.Scores.startAuto();
-  server.listen(PORT, () => console.log(`BancaRD seguro en http://localhost:${PORT}  ·  datos: ${store.describe()}`));
+  server.listen(PORT, () => console.log(`AuraSport seguro en http://localhost:${PORT}  ·  datos: ${store.describe()}`));
   const bye = () => { try { store.flush && store.flush(); } catch (e) { } process.exit(0); };
   process.on('SIGTERM', bye); process.on('SIGINT', bye);
 })().catch(e => { console.error('No se pudo iniciar:', e); process.exit(1); });

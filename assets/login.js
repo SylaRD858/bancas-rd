@@ -2,9 +2,10 @@
 (function () {
   const { U, Auth, UI, DB } = BRD;
   BRD.loginScreen = function (root, { title, subtitle, allow, onLogin }) {
+    if (BRD.Brand) BRD.Brand.refresh();
     const cfg = DB.cfg();
     root.innerHTML = `<div class="login-wrap"><form class="card login" id="lf">
-      <div class="brand"><i>B</i>${U.esc(cfg.company)}</div>
+      <div style="text-align:center"><img src="assets/logo.webp" alt="AuraSport" style="width:min(260px,80%);height:auto"></div>
       <h3 style="text-align:center">${U.esc(title)}</h3>
       <p class="mut" style="text-align:center;margin-top:-4px">${U.esc(subtitle || '')}</p>
       <div class="field"><label>Usuario</label><input name="u" autocomplete="username" required></div>

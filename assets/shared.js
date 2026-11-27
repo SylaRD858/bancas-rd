@@ -2,7 +2,7 @@
 (function () {
   const { U, DB, Auth, UI, Inv, Requests, Issues } = BRD;
   function requestForm(bancaId, onDone) {
-    const items = DB.all('items').filter(i => i.active !== false).sort((a, b) => a.name.localeCompare(b.name));
+    const items = BRD.Inv.itemsFor(bancaId).slice().sort((a, b) => a.name.localeCompare(b.name));
     const low = new Set(Inv.lowAt(bancaId).map(i => i.id));
     const m = UI.modal('Pedir material — ' + U.esc(Inv.locName(bancaId)), `<form id="rq"><table><thead><tr><th>Artículo</th><th class="num">Tengo</th><th class="num">Mín.</th><th>Pedir</th></tr></thead><tbody>
       ${items.map(i => `<tr><td>${U.esc(i.name)} ${low.has(i.id) ? '<span class="badge b-warn">bajo</span>' : ''}</td><td class="num">${Inv.qty(bancaId, i.id)} ${U.esc(i.unit)}</td><td class="num">${Inv.min(bancaId, i)}</td><td><input type="number" min="0" step="any" name="q_${i.id}" value="${low.has(i.id) ? Math.max(1, Inv.min(bancaId, i) * 2 - Inv.qty(bancaId, i.id)) : ''}" style="width:90px"></td></tr>`).join('')}</tbody></table>

@@ -1,9 +1,9 @@
 /* =========================================================
-   BancaRD — Panel de Control (administración de bancas)
+   AuraSport — Panel de Control (administración de bancas)
    ========================================================= */
 (async function () {
   const { U, DB, Auth, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, Inv, Requests, Issues } = BRD;
-  const { requestForm, requestModal, issueForm, issueModal } = BRD;
+  const { requestForm, requestModal, issueForm, issueModal, Brand, Docs } = BRD;
   BRD.captureErrors('panel');
   const root = document.getElementById('app');
   await DB.init();
@@ -20,6 +20,8 @@
     ['deportes', '🏟️', 'Juegos y líneas', 'games'],
     ['limites', '⛔', 'Topes y bloqueos', 'limits'],
     ['sep', 'Puntos de venta'],
+    ['consorcios', '🏢', 'Consorcios', '@platform'],
+    ['miconsorcio', '🏢', 'Mi consorcio', '@consorcio'],
     ['bancas', '🏪', 'Bancas', 'bancas.view'],
     ['staff', '👥', 'Staff', 'staff.view'],
     ['roles', '🔐', 'Roles y permisos', 'roles'],
@@ -32,10 +34,18 @@
     ['sep', 'Sistema'],
     ['loterias', '🗓️', 'Loterías y horarios', 'lotteries'],
     ['config', '⚙️', 'Configuración', 'config'],
+    ['apariencia', '🎨', 'Apariencia e impresoras', '@all'],
     ['auditoria', '🛡️', 'Auditoría', 'audit.view'],
     ['informe', '📘', 'Informe del sistema', 'dashboard'],
   ];
-  const navOk = n => n.slice(3).some(p => Auth.can(p));
+  const navOk = n => n.slice(3).some(p => p === '@all' ? true : p === '@platform' ? Auth.isPlatform() && (Auth.can('bancas.edit') || Auth.can('consorcio')) : p === '@consorcio' ? !Auth.isPlatform() && Auth.can('consorcio') : Auth.can(p));
+  /* almacenes centrales visibles (plataforma: el general + uno por consorcio) */
+  function centralLocs() {
+    if (!Auth.allBancas()) return [];
+    const cs = Auth.consorcios().map(c => ({ id: Inv.centralOf(c.id), code: 'ALM-' + c.code, name: 'Almacén ' + c.name }));
+    return Auth.isPlatform() ? [{ id: 'central', code: 'ALM', name: 'Almacén general' }].concat(cs) : cs;
+  }
+  const consName = id => (DB.get('consorcios', id) || {}).name || '';
   function navHTML(r, bd) {
     let out = '', sep = null;
     NAV.forEach(n => {
@@ -55,7 +65,7 @@
       pedidos: Auth.can('requests.approve') ? reqs.filter(r => r.status === 'pendiente' || r.status === 'aprobado').length : reqs.filter(r => r.status === 'despachado').length,
       soporte: Auth.can('issues.manage') ? iss.filter(i => i.status === 'abierto' || i.status === 'en_proceso').length : 0,
       syserr: DB.all('syserrors').filter(e => !e.resolved).length,
-      inventario: Auth.bancas().reduce((a, b) => a + Inv.lowAt(b.id).length, 0) + (sc === null ? Inv.lowAt('central').length : 0),
+      inventario: Auth.bancas().reduce((a, b) => a + Inv.lowAt(b.id).length, 0) + centralLocs().reduce((a, l) => a + Inv.lowAt(l.id).length, 0),
     };
   }
 
@@ -72,18 +82,122 @@
     const u = Auth.user(); if (!u) return start();
     let r = route(); let item = NAV.find(n => n[0] === r);
     if (!item || !navOk(item)) { item = NAV.find(n => n[0] !== 'sep' && navOk(n)); r = item[0]; }
-    const bd = badges();
+    const bd = badges(); Brand.refresh();
+    const br = Brand.for({ consorcioId: u.consorcioId || '' });
     root.innerHTML = `<div class="app"><aside class="side" id="side">
-      <div class="brand"><i>B</i>${U.esc(DB.cfg().company)}</div>
+      <div class="brand">${Brand.logoHTML({ consorcioId: u.consorcioId || '' })}<span>${U.esc(u.consorcioId ? br.name : 'AuraSport')}<br><small class="mut" style="font-weight:400">${u.consorcioId ? 'AuraSport' : 'Plataforma'}</small></span></div>
       <nav class="nav">${navHTML(r, bd)}</nav>
-      <div style="margin-top:auto;padding:10px" class="small">👤 ${U.esc(u.name)}<br>${U.esc(Auth.roleName(u))}<br>${Auth.allBancas(u) ? 'Todas las bancas' : Auth.userBancas(u).length + ' banca(s)'}<br>Datos: <b>${DB.mode}</b><br>
+      <div style="margin-top:auto;padding:10px" class="small">👤 ${U.esc(u.name)}<br>${U.esc(Auth.roleName(u))}<br>${Auth.allBancas(u) ? (u.consorcioId ? 'Todas las bancas del consorcio' : 'Todos los consorcios') : Auth.userBancas(u).length + ' banca(s)'}<br>Datos: <b>${DB.mode}</b><br>
       <div class="row" style="margin-top:8px">${Auth.hasPos(u) ? '<a class="btn sm" href="pos.html">Ir a venta</a>' : ''}<button class="btn sm" id="pw">Clave</button><button class="btn sm" id="lo">Salir</button></div></div>
       </aside><main class="main"><div class="top"><div class="row"><button class="btn sm menu-btn" id="mb">☰</button><h2 id="ttl">${item[2]}</h2></div><div class="row" id="actions"></div></div><div id="view"></div></main></div>`;
     UI.$('#lo').onclick = () => { Auth.logout(); start(); };
     UI.$('#pw').onclick = () => BRD.changePassword(u);
     UI.$('#mb').onclick = () => UI.$('#side').classList.toggle('open');
-    const views = { dashboard, tickets, reportes, turnos, resultados, deportes, limites, bancas, staff, roles, inventario, pedidos, soporte, syserr, loterias, config, auditoria, informe };
+    const views = { consorcios, miconsorcio, apariencia, dashboard, tickets, reportes, turnos, resultados, deportes, limites, bancas, staff, roles, inventario, pedidos, soporte, syserr, loterias, config, auditoria, informe };
     views[r](UI.$('#view'), UI.$('#actions'));
+  }
+
+  /* ======================= CONSORCIOS ======================= */
+  function consorcios(v, act) {
+    const list = Auth.consorcios(); const d = U.today();
+    act.innerHTML = '<button class="btn sm pri" id="nc">+ Nuevo consorcio</button>';
+    v.innerHTML = `<p class="mut">Cada consorcio agrupa sus bancas y su personal. El logo, el tema y la plantilla de factura del consorcio se aplican a todas sus bancas (cada banca puede tener los suyos).</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Logo</th><th>Código</th><th>Consorcio</th><th>RNC / Contacto</th><th class="num">Bancas</th><th class="num">Staff</th><th class="num">Ventas hoy</th><th>Tema</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${list.map(c => { const bs = DB.all('bancas').filter(b => b.consorcioId === c.id); const ids = new Set(bs.map(b => b.id)); const ve = DB.all('tickets').filter(t => ids.has(t.bancaId) && t.date === d && t.status !== 'anulado').reduce((a, t) => a + t.total, 0);
+      return `<tr><td>${c.logo ? `<img src="${U.esc(c.logo)}" style="height:34px;max-width:90px;object-fit:contain;background:#fff;border-radius:6px;padding:2px">` : '<span class="mut">—</span>'}</td><td><b>${U.esc(c.code)}</b></td><td><b>${U.esc(c.name)}</b></td><td class="small">${U.esc(c.rnc ? 'RNC ' + c.rnc : '')}<br>${U.esc(c.phone || '')}</td>
+        <td class="num">${bs.length}</td><td class="num">${DB.all('users').filter(u => u.consorcioId === c.id).length}</td><td class="num">${U.money(ve)}</td><td>${U.esc((Brand.THEMES[c.theme] || Brand.THEMES.aurasport).name)}</td>
+        <td><span class="badge ${c.status === 'suspendido' ? 'b-bad' : 'b-ok'}">${c.status || 'activo'}</span></td>
+        <td><div class="row"><button class="btn sm" data-e="${c.id}">Editar</button><button class="btn sm" data-a="${c.id}">+ Administrador</button><button class="btn sm ${c.status === 'suspendido' ? '' : 'warn'}" data-t="${c.id}">${c.status === 'suspendido' ? 'Activar' : 'Suspender'}</button></div></td></tr>`; }).join('') || '<tr><td colspan="10" class="empty">Aún no hay consorcios. Cree el primero.</td></tr>'}</tbody></table></div>`;
+    UI.$('#nc').onclick = () => consorcioForm(null);
+    v.querySelectorAll('[data-e]').forEach(b => b.onclick = () => consorcioForm(DB.get('consorcios', b.dataset.e)));
+    v.querySelectorAll('[data-a]').forEach(b => b.onclick = () => userForm(null, { consorcioId: b.dataset.a, role: 'admin_consorcio' }));
+    v.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => { const c = DB.get('consorcios', b.dataset.t); const ns = c.status === 'suspendido' ? 'activo' : 'suspendido'; if (!await UI.confirm(ns === 'suspendido' ? `¿Suspender ${c.name}? Ninguna de sus bancas podrá vender ni su personal entrar.` : `¿Activar ${c.name}?`)) return; DB.patch('consorcios', c.id, { status: ns }); DB.log('consorcio.estado', c.name + ' → ' + ns); render(); });
+  }
+  function miconsorcio(v) {
+    const c = DB.get('consorcios', Auth.consorcio()); if (!c) { v.innerHTML = '<div class="empty">Su usuario no pertenece a un consorcio.</div>'; return; }
+    consorcioForm(c, v);
+  }
+  /* formulario del consorcio: datos, logo, tema y plantilla de factura (en modal o dentro de la vista) */
+  function consorcioForm(c, inline) {
+    const isNew = !c; const plat = Auth.isPlatform();
+    c = c || { code: 'C' + String(DB.all('consorcios').length + 1).padStart(2, '0'), status: 'activo', theme: 'aurasport', logo: '', invoice: {} };
+    const inv = Object.assign({}, Brand.DEFAULT_INVOICE, c.invoice || {});
+    const html = `<form id="cf2"><div class="tabs">${[['datos', 'Datos'], ['logo', 'Logo y tema'], ['fact', 'Plantilla de factura']].map(([k, n], i) => `<button type="button" class="tab ${i ? '' : 'on'}" data-ct="${k}">${n}</button>`).join('')}</div>
+      <div data-cp="datos"><div class="grid g2">
+        <div class="field"><label>Código</label><input name="code" value="${U.esc(c.code)}" maxlength="6" ${plat ? '' : 'readonly'} required></div>
+        <div class="field"><label>Nombre del consorcio</label><input name="name" value="${U.esc(c.name || '')}" required></div>
+        <div class="field"><label>RNC</label><input name="rnc" value="${U.esc(c.rnc || '')}"></div>
+        <div class="field"><label>Teléfono</label><input name="phone" value="${U.esc(c.phone || '')}"></div>
+        <div class="field"><label>Correo</label><input name="email" value="${U.esc(c.email || '')}"></div>
+        <div class="field"><label>Dirección</label><input name="address" value="${U.esc(c.address || '')}"></div></div></div>
+      <div data-cp="logo" hidden><label>Logo del consorcio (se usa en todas sus bancas, recibos e informes)</label>
+        <div class="logo-box"><span id="lprev">${c.logo ? `<img src="${U.esc(c.logo)}">` : '<span class="mut">Sin logo</span>'}</span><label class="btn sm" style="margin:0">Subir logo<input type="file" id="lfile" accept="image/*" hidden></label><button type="button" class="btn sm ghost" id="lrm">Quitar</button></div>
+        <h4>Tema de colores</h4>${Brand.themePicker(c.theme || 'aurasport', 'theme')}<p class="small">Cada equipo puede cambiar su tema en <b>Apariencia e impresoras</b>.</p></div>
+      <div data-cp="fact" hidden><p class="small">Esta plantilla la usan todas las bancas del consorcio. En cada banca puede personalizarse.</p>${Brand.invoiceEditor(inv)}</div>
+      <button class="btn pri" style="margin-top:12px">${isNew ? 'Crear consorcio' : 'Guardar'}</button></form>`;
+    let m;
+    if (inline) { inline.innerHTML = `<div class="card">${html}</div>`; m = inline; } else m = UI.modal(isNew ? 'Nuevo consorcio' : 'Consorcio ' + U.esc(c.name), html, { wide: true });
+    let logo = c.logo || '';
+    m.querySelectorAll('[data-ct]').forEach(t => t.onclick = () => { m.querySelectorAll('[data-ct]').forEach(x => x.classList.toggle('on', x === t)); m.querySelectorAll('[data-cp]').forEach(p => p.hidden = p.dataset.cp !== t.dataset.ct); });
+    m.querySelector('#lfile').onchange = async e => { try { logo = await Brand.readLogo(e.target.files[0]); m.querySelector('#lprev').innerHTML = `<img src="${logo}">`; } catch (err) { UI.toast(err.message, 'bad'); } };
+    m.querySelector('#lrm').onclick = () => { logo = ''; m.querySelector('#lprev').innerHTML = '<span class="mut">Sin logo</span>'; };
+    m.querySelectorAll('input[name=theme]').forEach(r => r.onchange = () => Brand.applyTheme(r.value));
+    Brand.bindInvoiceEditor(m.querySelector('[data-cp=fact]'), (DB.all('bancas').find(b => b.consorcioId === c.id) || {}).id, c.id, false);
+    m.querySelector('#cf2').onsubmit = async e => {
+      e.preventDefault(); const f = UI.formData(e.target); const th = m.querySelector('input[name=theme]:checked');
+      const code = String(f.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (DB.all('consorcios').some(x => x.code === code && x.id !== c.id)) return UI.toast('Ese código ya existe', 'warn');
+      const rec = Object.assign({}, c, { code, name: f.name.trim(), rnc: f.rnc, phone: f.phone, email: f.email, address: f.address, logo, theme: th ? th.value : 'aurasport', invoice: Brand.readInvoice(m.querySelector('[data-cp=fact]')) });
+      if (!rec.id) { rec.id = U.uid('c_'); rec.createdAt = Date.now(); }
+      DB.put('consorcios', rec);
+      try { await DB.confirm('consorcios', rec.id); } catch (err) { return UI.toast(err.message, 'bad', 6000); }
+      DB.log(isNew ? 'consorcio.creado' : 'consorcio.editado', rec.code + ' ' + rec.name); UI.toast(isNew ? 'Consorcio creado. Ahora cree sus bancas y su administrador.' : 'Guardado');
+      if (!inline) UI.closeModal(); render();
+    };
+  }
+  /* banca: logo, tema y factura propios */
+  function bancaBrandForm(b) {
+    const base = Brand.for({ consorcioId: b.consorcioId });
+    const inv = Object.assign({}, base.invoice, b.invoice && b.invoice.custom ? b.invoice : {}, { custom: !!(b.invoice && b.invoice.custom) });
+    const m = UI.modal('Logo, tema y factura — ' + U.esc(b.name), `<form id="bb"><div class="tabs"><button type="button" class="tab on" data-ct="logo">Logo y tema</button><button type="button" class="tab" data-ct="fact">Factura</button></div>
+      <div data-cp="logo"><label>Logo de la banca (si no sube uno, usa el del consorcio)</label>
+      <div class="logo-box"><span id="lprev">${b.logo ? `<img src="${U.esc(b.logo)}">` : base.logo ? `<img src="${U.esc(base.logo)}" style="opacity:.5" title="Logo del consorcio">` : '<span class="mut">Sin logo</span>'}</span><label class="btn sm" style="margin:0">Subir logo propio<input type="file" id="lfile" accept="image/*" hidden></label><button type="button" class="btn sm ghost" id="lrm">Usar el del consorcio</button></div>
+      <h4>Tema</h4><label class="chk"><input type="checkbox" id="thc" ${b.theme ? '' : 'checked'}> Usar el tema del consorcio (${U.esc((Brand.THEMES[base.theme] || {}).name || '')})</label><div id="thw" ${b.theme ? '' : 'hidden'}>${Brand.themePicker(b.theme || base.theme, 'theme')}</div></div>
+      <div data-cp="fact" hidden>${Brand.invoiceEditor(inv, { banca: true })}</div><button class="btn pri" style="margin-top:12px">Guardar</button></form>`, { wide: true });
+    let logo = b.logo || '';
+    m.querySelectorAll('[data-ct]').forEach(t => t.onclick = () => { m.querySelectorAll('[data-ct]').forEach(x => x.classList.toggle('on', x === t)); m.querySelectorAll('[data-cp]').forEach(p => p.hidden = p.dataset.cp !== t.dataset.ct); });
+    m.querySelector('#lfile').onchange = async e => { try { logo = await Brand.readLogo(e.target.files[0]); m.querySelector('#lprev').innerHTML = `<img src="${logo}">`; } catch (err) { UI.toast(err.message, 'bad'); } };
+    m.querySelector('#lrm').onclick = () => { logo = ''; m.querySelector('#lprev').innerHTML = base.logo ? `<img src="${U.esc(base.logo)}" style="opacity:.5">` : '<span class="mut">Sin logo</span>'; };
+    m.querySelector('#thc').onchange = e => { m.querySelector('#thw').hidden = e.target.checked; };
+    Brand.bindInvoiceEditor(m.querySelector('[data-cp=fact]'), b.id, b.consorcioId, true);
+    m.querySelector('#bb').onsubmit = async e => {
+      e.preventDefault(); const th = m.querySelector('input[name=theme]:checked');
+      const rec = Object.assign({}, b, { logo, theme: m.querySelector('#thc').checked ? '' : (th ? th.value : ''), invoice: Brand.readInvoice(m.querySelector('[data-cp=fact]')) });
+      DB.put('bancas', rec); try { await DB.confirm('bancas', rec.id); } catch (err) { return UI.toast(err.message, 'bad', 6000); }
+      DB.log('banca.marca', rec.code); UI.closeModal(); UI.toast('Guardado'); render();
+    };
+  }
+  /* ajustes de este equipo */
+  function apariencia(v) {
+    const d = Brand.Device.get(); const u = Auth.user(); const cur = Brand.for(Brand.ctx()).theme;
+    v.innerHTML = `<div class="grid g2"><div class="card"><h3>Tema de este equipo</h3><label class="chk"><input type="checkbox" id="thc" ${d.theme ? '' : 'checked'}> Usar el tema de ${u.consorcioId ? 'mi consorcio / banca' : 'la plataforma'} (${U.esc((Brand.THEMES[cur] || {}).name || '')})</label>
+      <div id="thw" ${d.theme ? '' : 'hidden'}>${Brand.themePicker(d.theme || cur, 'dtheme')}</div></div>
+      <div class="card"><h3>Impresoras de este equipo</h3>
+      <div class="field"><label>🧾 Impresora térmica (recibos y tickets en caja)</label><select id="rp"><option value="">Según la plantilla de factura</option><option value="80" ${d.receiptPaper === '80' ? 'selected' : ''}>80 mm</option><option value="58" ${d.receiptPaper === '58' ? 'selected' : ''}>58 mm</option></select></div>
+      <div class="field"><label>🖨️ Impresora normal (informes, cierres, listados)</label><select id="pp"><option value="letter" ${d.reportPaper !== 'a4' ? 'selected' : ''}>Carta (8.5 × 11)</option><option value="a4" ${d.reportPaper === 'a4' ? 'selected' : ''}>A4</option></select></div>
+      <label class="chk"><input type="checkbox" id="ap" ${d.autoPrint !== false ? 'checked' : ''}> Imprimir el ticket automáticamente al vender</label>
+      <p class="small">Al imprimir, el navegador muestra la lista de impresoras: elija la <b>térmica</b> para recibos y la <b>normal</b> (o "Guardar como PDF") para informes. En Chrome, cada tipo de documento recuerda la última impresora usada. Los botones <b>📄 PDF</b> descargan el informe directamente.</p>
+      <div class="row"><button class="btn" id="tt">Probar recibo térmico</button><button class="btn" id="tl">Probar hoja carta</button><button class="btn" id="tp">Probar PDF</button></div></div></div>`;
+    const save = ch => { Brand.Device.set(ch); Brand.refresh(); };
+    UI.$('#thc').onchange = e => { UI.$('#thw').hidden = e.target.checked; if (e.target.checked) save({ theme: '' }); };
+    v.querySelectorAll('input[name=dtheme]').forEach(r => r.onchange = () => { save({ theme: r.value }); v.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('on', c.contains(r))); });
+    UI.$('#rp').onchange = e => save({ receiptPaper: e.target.value });
+    UI.$('#pp').onchange = e => save({ reportPaper: e.target.value });
+    UI.$('#ap').onchange = e => save({ autoPrint: e.target.checked });
+    const b0 = Auth.bancas()[0];
+    UI.$('#tt').onclick = () => BRD.printHTML(BRD.ticketHTML(Brand.sampleTicket(b0 && b0.id), { ctx: b0 ? { bancaId: b0.id } : Brand.ctx() }), 'termica');
+    const spec = () => ({ title: 'Página de prueba', subtitle: 'Impresora normal', meta: [['Equipo', navigator.userAgent.slice(0, 80)]], sections: [{ columns: [{ h: 'Columna' }, { h: 'Valor', align: 'right' }], rows: [['Ejemplo 1', U.money(100)], ['Ejemplo 2', U.money(250.5)]], foot: ['Total', U.money(350.5)] }] });
+    UI.$('#tl').onclick = () => Docs.print(spec()); UI.$('#tp').onclick = () => Docs.pdf(spec(), 'prueba_aurasport');
   }
 
   /* ======================= DASHBOARD ======================= */
@@ -105,9 +219,10 @@
     const pct = (a, b) => b ? ((a - b) / b * 100).toFixed(0) + '%' : '—';
     act.innerHTML = `<button class="btn sm" id="rfs">↻ Actualizar marcadores</button>`;
     UI.$('#rfs').onclick = async () => { const r = await Scores.refreshAll({ ahead: true }); UI.toast(`Marcadores: ${r.updated} act., ${r.imported} nuevos, ${r.graded} tickets calificados${r.errors ? ', ' + r.errors + ' errores' : ''}`, r.errors ? 'warn' : 'ok'); render(); };
-    const onboarding = Auth.can('bancas.edit') && !DB.all('bancas').length ? `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><h3>👋 Primeros pasos</h3><ol>
-      <li><a href="#config">Configuración</a>: nombre del consorcio, RNC, premios y reglas.</li>
-      <li><a href="#bancas">Bancas</a>: cree su primera banca o punto de venta.</li>
+    const onboarding = Auth.can('bancas.edit') && !Auth.bancas().length ? `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><h3>👋 Primeros pasos</h3><ol>
+      ${Auth.isPlatform() ? `<li><a href="#config">Configuración</a>: premios, reglas y horarios generales de la plataforma.</li>
+      <li><a href="#consorcios">Consorcios</a>: cree el consorcio (nombre, RNC, logo, tema y plantilla de factura).</li>` : `<li><a href="#miconsorcio">Mi consorcio</a>: datos, logo, tema y plantilla de factura.</li>`}
+      <li><a href="#bancas">Bancas</a>: cree las bancas o puntos de venta del consorcio.</li>
       <li><a href="#staff">Staff</a>: cree cajeros, encargados y supervisores, y asígneles sus bancas.</li>
       <li><a href="#loterias">Loterías y horarios</a>: confirme las horas de cada sorteo.</li>
       <li><a href="#inventario">Existencias</a>: registre la entrada inicial de material en el almacén.</li></ol></div>` : '';
@@ -132,7 +247,12 @@
     let list = DB.all('tickets').filter(t => Auth.sees(t.bancaId) && t.date >= f.from && t.date <= f.to && (!f.banca || t.bancaId === f.banca) && (!f.status || t.status === f.status) && (!f.type || t.type === f.type) && (!f.q || t.code.includes(f.q.toUpperCase()) || (t.userName || '').toLowerCase().includes(f.q.toLowerCase())));
     list.sort((a, b) => b.createdAt - a.createdAt);
     const shown = list.slice(0, 500);
-    act.innerHTML = `<button class="btn sm" id="ex">Exportar CSV</button><button class="btn sm" id="gr">Recalificar</button>`;
+    act.innerHTML = `<button class="btn sm" id="ex">Exportar CSV</button>${Docs.buttons('tk')}<button class="btn sm" id="gr">Recalificar</button>`;
+    Docs.bind(act, 'tk', () => ({ title: 'Listado de tickets', subtitle: `Del ${U.d(f.from)} al ${U.d(f.to)}`, ctx: f.banca ? { bancaId: f.banca } : Brand.ctx(),
+      meta: [['Filtros', [f.banca ? (DB.get('bancas', f.banca) || {}).name : 'Todas las bancas', f.status || 'todos los estados', f.type || 'todos los tipos', f.q].filter(Boolean).join(' · ')]],
+      kpis: [['Tickets', String(list.length)], ['Vendido', U.money(list.filter(t => t.status !== 'anulado').reduce((a, t) => a + t.total, 0))], ['Premios', U.money(list.reduce((a, t) => a + (t.prize || 0), 0))]],
+      sections: [{ columns: [{ h: 'Fecha', w: 1.6 }, { h: 'Ticket', w: 1.8 }, { h: 'Banca', w: 0.8 }, { h: 'Vendedor', w: 1.5 }, { h: 'Monto', align: 'right' }, { h: 'Premio', align: 'right' }, { h: 'Estado' }],
+        rows: list.slice(0, 3000).map(t => [U.dt(t.createdAt), t.code, (DB.get('bancas', t.bancaId) || {}).code || '', t.userName || '', U.money(t.total), t.prize ? U.money(t.prize) : '', t.status]) }] }), () => `tickets_${f.from}_${f.to}`);
     v.innerHTML = `<div class="card"><form id="tf" class="row">
       <div><label>Desde</label><input type="date" name="from" value="${f.from}"></div><div><label>Hasta</label><input type="date" name="to" value="${f.to}"></div>
       <div><label>Banca</label><select name="banca"><option value="">Todas</option>${Auth.bancas().map(b => `<option value="${b.id}" ${f.banca === b.id ? 'selected' : ''}>${U.esc(b.name)}</option>`).join('')}</select></div>
@@ -181,7 +301,7 @@
     }).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     // por tipo de jugada (lotería)
     const byKind = {}; R.valid.filter(t => t.type === 'loteria').forEach(t => t.lines.forEach(l => { const k = KIND_NAMES[l.kind]; byKind[k] = byKind[k] || [0, 0]; byKind[k][0] += Number(l.amount); byKind[k][1] += Number(l.prize || 0); }));
-    act.innerHTML = `<button class="btn sm" id="ex">Exportar CSV</button><button class="btn sm" id="pr">Imprimir</button>`;
+    act.innerHTML = `<button class="btn sm" id="ex">Exportar CSV</button>${Docs.buttons('rep')}`;
     v.innerHTML = `<div class="card"><form id="rf" class="row">
       <div><label>Desde</label><input type="date" name="from" value="${f.from}"></div><div><label>Hasta</label><input type="date" name="to" value="${f.to}"></div>
       <div><label>Banca</label><select name="banca"><option value="">Todas mis bancas</option>${Auth.bancas().map(b => `<option value="${b.id}" ${f.banca === b.id ? 'selected' : ''}>${U.esc(b.name)}</option>`).join('')}</select></div>
@@ -200,14 +320,27 @@
     UI.$('#rf').onsubmit = e => { e.preventDefault(); reportes.f = UI.formData(e.target); render(); };
     v.querySelectorAll('[data-q]').forEach(x => x.onclick = () => { const [a, b] = x.dataset.q.split(',').map(Number); reportes.f = Object.assign({}, f, { from: U.addDays(U.today(), a), to: U.addDays(U.today(), b) }); render(); });
     UI.$('#ex').onclick = () => U.download(`reporte_${f.group}_${f.from}_${f.to}.csv`, U.csv([[f.group, 'tickets', 'ventas', 'premios', 'comision', 'neto'], ...rows]), 'text/csv');
-    UI.$('#pr').onclick = () => window.print();
+    const gname = { banca: 'Banca', vendedor: 'Vendedor', dia: 'Día', producto: 'Producto' }[f.group];
+    Docs.bind(act, 'rep', () => ({
+      title: 'Reporte de ventas', subtitle: `Del ${U.d(f.from)} al ${U.d(f.to)} · agrupado por ${gname.toLowerCase()}`, ctx: f.banca ? { bancaId: f.banca } : Brand.ctx(),
+      meta: [['Bancas', f.banca ? (DB.get('bancas', f.banca) || {}).name : (Auth.allBancas() ? 'Todas' : Auth.bancas().map(b => b.code).join(', '))], ['Generado por', Auth.user().name]],
+      kpis: [['Ventas', U.money(R.ventas)], ['Premios', U.money(R.premios)], ['Comisiones', U.money(R.comision)], ['Neto', U.money(R.neto)]],
+      sections: [{ title: 'Detalle', columns: [{ h: gname, w: 3 }, { h: 'Tickets', align: 'right' }, { h: 'Ventas', w: 1.4, align: 'right' }, { h: 'Premios', w: 1.4, align: 'right' }, { h: 'Comisión', w: 1.3, align: 'right' }, { h: 'Neto', w: 1.4, align: 'right' }],
+        rows: rows.map(r => [r[0], r[1], U.money(r[2]), U.money(r[3]), U.money(r[4]), U.money(r[5])]), foot: ['TOTAL', R.valid.length, U.money(R.ventas), U.money(R.premios), U.money(R.comision), U.money(R.neto)] },
+      { title: 'Lotería por tipo de jugada', columns: [{ h: 'Jugada', w: 2 }, { h: 'Vendido', align: 'right' }, { h: 'Premios', align: 'right' }, { h: '% retorno', align: 'right' }],
+        rows: Object.entries(byKind).map(([k, [a, p]]) => [k, U.money(a), U.money(p), a ? (p / a * 100).toFixed(1) + '%' : '—']) }],
+      notes: [`Anulados: ${R.anulados} (${U.money(R.montoAnulado)}) · Premios pagados ${U.money(R.pagados)} · Por pagar ${U.money(R.pendPago)}`],
+    }), () => `reporte_${f.from}_${f.to}`);
   }
 
   /* ======================= TURNOS ======================= */
   function turnos(v) {
     const list = DB.all('shifts').filter(s => Auth.sees(s.bancaId)).sort((a, b) => b.openedAt - a.openedAt).slice(0, 300);
     v.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>Cajero</th><th>Banca</th><th>Apertura</th><th>Cierre</th><th class="num">Fondo</th><th class="num">Ventas</th><th class="num">Pagos</th><th class="num">Gastos</th><th class="num">Esperado</th><th class="num">Declarado</th><th class="num">Dif.</th><th></th></tr></thead><tbody>
-      ${list.map(s => { const r = s.status === 'abierto' ? Shifts.summary(s) : s.resumen; return `<tr><td>${U.esc(s.userName)}</td><td>${U.esc((DB.get('bancas', s.bancaId) || {}).code || '')}</td><td>${U.dt(s.openedAt)}</td><td>${s.closedAt ? U.dt(s.closedAt) : '<span class="badge b-ok">abierto</span>'}</td><td class="num">${U.money(s.fondo)}</td><td class="num">${U.money(r.ventas)}</td><td class="num">${U.money(r.pagos)}</td><td class="num">${U.money(r.gastos)}</td><td class="num">${U.money(r.esperado)}</td><td class="num">${s.status === 'cerrado' ? U.money(s.declarado) : ''}</td><td class="num" style="color:${(s.diferencia || 0) < 0 ? 'var(--bad)' : 'var(--ac)'}">${s.status === 'cerrado' ? U.money(s.diferencia) : ''}</td><td>${s.status === 'abierto' && Auth.can('shifts.close') ? `<button class="btn sm warn" data-fc="${s.id}">Forzar cierre</button>` : U.esc(s.nota || '')}</td></tr>`; }).join('') || '<tr><td colspan="12" class="empty">Sin turnos</td></tr>'}</tbody></table></div>`;
+      ${list.map(s => { const r = s.status === 'abierto' ? Shifts.summary(s) : s.resumen; return `<tr><td>${U.esc(s.userName)}</td><td>${U.esc((DB.get('bancas', s.bancaId) || {}).code || '')}</td><td>${U.dt(s.openedAt)}</td><td>${s.closedAt ? U.dt(s.closedAt) : '<span class="badge b-ok">abierto</span>'}</td><td class="num">${U.money(s.fondo)}</td><td class="num">${U.money(r.ventas)}</td><td class="num">${U.money(r.pagos)}</td><td class="num">${U.money(r.gastos)}</td><td class="num">${U.money(r.esperado)}</td><td class="num">${s.status === 'cerrado' ? U.money(s.declarado) : ''}</td><td class="num" style="color:${(s.diferencia || 0) < 0 ? 'var(--bad)' : 'var(--ac)'}">${s.status === 'cerrado' ? U.money(s.diferencia) : ''}</td><td><div class="row">${s.status === 'abierto' && Auth.can('shifts.close') ? `<button class="btn sm warn" data-fc="${s.id}">Forzar cierre</button>` : U.esc(s.nota || '')}<button class="btn sm" data-sp="${s.id}" title="Impresora normal">🖨️</button><button class="btn sm" data-sf="${s.id}" title="PDF">📄</button><button class="btn sm" data-st="${s.id}" title="Térmica">🧾</button></div></td></tr>`; }).join('') || '<tr><td colspan="12" class="empty">Sin turnos</td></tr>'}</tbody></table></div>`;
+    v.querySelectorAll('[data-sp]').forEach(x => x.onclick = () => Docs.print(Docs.shiftSpec(DB.get('shifts', x.dataset.sp))));
+    v.querySelectorAll('[data-sf]').forEach(x => x.onclick = () => { const s = DB.get('shifts', x.dataset.sf); Docs.pdf(Docs.shiftSpec(s), 'cierre_' + U.d(s.openedAt) + '_' + s.userName); });
+    v.querySelectorAll('[data-st]').forEach(x => x.onclick = () => BRD.printHTML(Docs.shiftThermal(DB.get('shifts', x.dataset.st)), 'termica'));
     v.querySelectorAll('[data-fc]').forEach(x => x.onclick = async () => { const s = DB.get('shifts', x.dataset.fc); const d = await UI.prompt('Efectivo declarado/recibido para cerrar el turno de ' + s.userName + ':', Shifts.summary(s).esperado); if (d === null) return; Shifts.close(s, d, 'Cierre forzado por ' + Auth.user().username); render(); });
   }
 
@@ -215,12 +348,14 @@
   function resultados(v) {
     const d = resultados.d || U.today();
     const lots = Lot.list();
-    v.innerHTML = `<div class="card"><div class="row"><label style="margin:0">Fecha del sorteo</label><input type="date" id="rd" value="${d}" style="width:auto"><span class="small">Ingrese 1ra, 2da y 3ra (2 dígitos). Al guardar se califican automáticamente todos los tickets.</span></div></div>
+    v.innerHTML = `<div class="card"><div class="row"><label style="margin:0">Fecha del sorteo</label><input type="date" id="rd" value="${d}" style="width:auto">${Docs.buttons('res')}<span class="small">Ingrese 1ra, 2da y 3ra (2 dígitos). Al guardar se califican automáticamente todos los tickets.</span></div></div>
       <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Lotería</th><th>Hora</th><th>1ra</th><th>2da</th><th>3ra</th><th>Vendido</th><th>Premios</th><th></th></tr></thead><tbody>
       ${lots.map(l => { const r = DB.get('results', l.id + '_' + d); const st = soldPrize(l.id, d); return `<tr data-row="${l.id}"><td><b>${U.esc(l.name)}</b>${Lot.playsOn(l, d) ? '' : '<br><small>No juega este día</small>'}</td><td>${U.hhmm12(Lot.timeFor(l, d))}</td>
         ${['n1', 'n2', 'n3'].map(k => `<td><input class="rn" data-k="${k}" maxlength="2" inputmode="numeric" value="${r ? r[k] : ''}" style="width:58px;text-align:center;font-weight:700"></td>`).join('')}
         <td class="num">${U.money(st.sold)}</td><td class="num">${r ? U.money(st.prize) : ''}</td><td><div class="row"><button class="btn sm pri" data-save="${l.id}">Guardar</button>${r ? `<button class="btn sm ghost" data-del="${l.id}">Borrar</button>` : ''}</div>${r ? `<small>por ${U.esc(r.by)} ${U.time(r.at)}</small>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
     UI.$('#rd').onchange = e => { resultados.d = e.target.value; render(); };
+    Docs.bind(v, 'res', () => ({ title: 'Resultados de lotería', subtitle: U.d(d), sections: [{ columns: [{ h: 'Lotería', w: 2.5 }, { h: 'Hora' }, { h: '1ra', align: 'right' }, { h: '2da', align: 'right' }, { h: '3ra', align: 'right' }, { h: 'Vendido', w: 1.3, align: 'right' }, { h: 'Premios', w: 1.3, align: 'right' }],
+      rows: lots.filter(l => Lot.playsOn(l, d)).map(l => { const r = DB.get('results', l.id + '_' + d) || {}; const st = soldPrize(l.id, d); return [l.name, U.hhmm12(Lot.timeFor(l, d)), r.n1 || '—', r.n2 || '—', r.n3 || '—', U.money(st.sold), r.n1 ? U.money(st.prize) : '']; }) }] }), () => 'resultados_' + d);
     v.querySelectorAll('.rn').forEach(i => i.oninput = () => { i.value = i.value.replace(/\D/g, '').slice(0, 2); if (i.value.length === 2) { const all = UI.$$('.rn'); const nx = all[all.indexOf(i) + 1]; if (nx) nx.focus(); } });
     v.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
       const id = b.dataset.save; const row = v.querySelector(`[data-row="${id}"]`); const vals = {};
@@ -328,18 +463,19 @@
 
   /* ======================= LÍMITES ======================= */
   function limites(v, act) {
-    const list = DB.all('limits').filter(r => r.scope === 'global' || Auth.sees(r.scope)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const scName = sc => sc === 'global' ? 'Todas las bancas (plataforma)' : String(sc).startsWith('c:') ? 'Consorcio ' + consName(sc.slice(2)) : (DB.get('bancas', sc) || {}).name || sc;
+    const list = DB.all('limits').filter(r => r.scope === 'global' || (String(r.scope).startsWith('c:') ? Auth.seesConsorcio(r.scope.slice(2)) : Auth.sees(r.scope))).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     const cfg = DB.cfg();
     act.innerHTML = `<button class="btn sm pri" id="nl">+ Nuevo tope / bloqueo</button>`;
-    v.innerHTML = `<div class="card"><h3>Máximo por jugada (general)</h3><form id="ml" class="row">${['Q', 'P', 'T', 'SP'].map(k => `<div><label>${KIND_NAMES[k]}</label><input name="${k}" type="number" value="${cfg.maxLine[k] || ''}" style="width:120px"></div>`).join('')}<div><label>Mínimo lotería</label><input name="min" type="number" value="${cfg.lotMin}" style="width:100px"></div><div><label>&nbsp;</label><button class="btn">Guardar</button></div></form></div>
+    v.innerHTML = `<div class="card" ${Auth.can('config') ? '' : 'hidden'}><h3>Máximo por jugada (general)</h3><form id="ml" class="row">${['Q', 'P', 'T', 'SP'].map(k => `<div><label>${KIND_NAMES[k]}</label><input name="${k}" type="number" value="${cfg.maxLine[k] || ''}" style="width:120px"></div>`).join('')}<div><label>Mínimo lotería</label><input name="min" type="number" value="${cfg.lotMin}" style="width:100px"></div><div><label>&nbsp;</label><button class="btn">Guardar</button></div></form></div>
       <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Alcance</th><th>Lotería</th><th>Jugada</th><th>Número</th><th>Regla</th><th>Vendido hoy</th><th>Nota</th><th>Activo</th><th></th></tr></thead><tbody>
-      ${list.map(r => `<tr><td>${r.scope === 'global' ? 'Todas las bancas' : U.esc((DB.get('bancas', r.scope) || {}).name || r.scope)}</td><td>${r.lot === '*' ? 'Todas' : U.esc(Lot.name(r.lot))}</td><td>${r.kind === '*' ? 'Todas' : KIND_NAMES[r.kind]}</td><td><b>${U.esc(r.num)}</b></td><td>${r.blocked ? '<span class="badge b-bad">Bloqueado</span>' : 'Tope ' + U.money(r.max)}</td><td>${r.num !== '*' && r.kind !== '*' && r.lot !== '*' ? U.money(soldQuick(r)) : '—'}</td><td class="small">${U.esc(r.note || '')}</td><td><input type="checkbox" data-ac="${r.id}" ${r.active !== false ? 'checked' : ''}></td><td><button class="btn sm ghost" data-d="${r.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Sin reglas. Las reglas limitan cuánto se puede vender de un número o lo bloquean.</td></tr>'}</tbody></table></div>`;
-    UI.$('#ml').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); const c = DB.cfg(); DB.put('config', Object.assign({}, c, { lotMin: Number(f.min) || 1, maxLine: { Q: Number(f.Q) || 0, P: Number(f.P) || 0, T: Number(f.T) || 0, SP: Number(f.SP) || 0 } })); DB.log('config.topes', JSON.stringify(f)); UI.toast('Guardado'); };
+      ${list.map(r => `<tr><td>${U.esc(scName(r.scope))}</td><td>${r.lot === '*' ? 'Todas' : U.esc(Lot.name(r.lot))}</td><td>${r.kind === '*' ? 'Todas' : KIND_NAMES[r.kind]}</td><td><b>${U.esc(r.num)}</b></td><td>${r.blocked ? '<span class="badge b-bad">Bloqueado</span>' : 'Tope ' + U.money(r.max)}</td><td>${r.num !== '*' && r.kind !== '*' && r.lot !== '*' ? U.money(soldQuick(r)) : '—'}</td><td class="small">${U.esc(r.note || '')}</td><td><input type="checkbox" data-ac="${r.id}" ${r.active !== false ? 'checked' : ''}></td><td><button class="btn sm ghost" data-d="${r.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="9" class="empty">Sin reglas. Las reglas limitan cuánto se puede vender de un número o lo bloquean.</td></tr>'}</tbody></table></div>`;
+    if (Auth.can('config')) UI.$('#ml').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); const c = DB.cfg(); DB.put('config', Object.assign({}, c, { lotMin: Number(f.min) || 1, maxLine: { Q: Number(f.Q) || 0, P: Number(f.P) || 0, T: Number(f.T) || 0, SP: Number(f.SP) || 0 } })); DB.log('config.topes', JSON.stringify(f)); UI.toast('Guardado'); };
     v.querySelectorAll('[data-ac]').forEach(c => c.onchange = () => DB.patch('limits', c.dataset.ac, { active: c.checked }));
     v.querySelectorAll('[data-d]').forEach(b => b.onclick = async () => { if (await UI.confirm('¿Eliminar regla?')) { DB.remove('limits', b.dataset.d); DB.log('tope.eliminado', b.dataset.d); render(); } });
     UI.$('#nl').onclick = () => {
       const m = UI.modal('Nuevo tope / bloqueo', `<form id="lf"><div class="grid g2">
-        <div class="field"><label>Alcance</label><select name="scope">${Auth.allBancas() ? '<option value="global">Todas las bancas (suma total)</option>' : ''}${Auth.bancas().map(b => `<option value="${b.id}">${U.esc(b.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Alcance</label><select name="scope">${Auth.allBancas() && Auth.isPlatform() ? '<option value="global">Todas las bancas de la plataforma (suma total)</option>' : ''}${Auth.allBancas() ? Auth.consorcios().map(c => `<option value="c:${c.id}">Todo el consorcio ${U.esc(c.name)} (suma)</option>`).join('') : ''}${Auth.bancas().map(b => `<option value="${b.id}">${U.esc(b.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Lotería</label><select name="lot"><option value="*">Todas</option>${Lot.list().map(l => `<option value="${l.id}">${U.esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Tipo de jugada</label><select name="kind">${['Q', 'P', 'T', 'SP'].map(k => `<option value="${k}">${KIND_NAMES[k]}</option>`).join('')}<option value="*">Todas</option></select></div>
         <div class="field"><label>Número (ej. 25, 25-47, o * = todos)</label><input name="num" required placeholder="25"></div>
@@ -368,16 +504,20 @@
     const canEdit = Auth.can('bancas.edit');
     const d = U.today();
     act.innerHTML = canEdit ? '<button class="btn sm pri" id="nb">+ Nueva banca / punto de venta</button>' : '';
-    v.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>Código</th><th>Nombre</th><th>Tipo</th><th>Zona / Dirección</th><th>Staff asignado</th><th class="num">Ventas hoy</th><th>Alertas</th><th>Estado</th><th></th></tr></thead><tbody>
-      ${list.map(b => {
+    const fc = bancas.c || ''; const plat = Auth.isPlatform();
+    const shown = list.filter(b => !fc || b.consorcioId === fc);
+    v.innerHTML = `${plat ? `<div class="card" style="margin-bottom:12px"><div class="row"><label style="margin:0">Consorcio</label><select id="fc" style="width:auto"><option value="">Todos</option>${Auth.consorcios().map(c => `<option value="${c.id}" ${fc === c.id ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}</select></div></div>` : ''}<div class="tbl-wrap"><table><thead><tr><th>Código</th><th>Nombre</th>${plat ? '<th>Consorcio</th>' : ''}<th>Tipo</th><th>Zona / Dirección</th><th>Staff asignado</th><th class="num">Ventas hoy</th><th>Alertas</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${shown.map(b => {
       const staff = staffOf(b.id); const ve = DB.all('tickets').filter(t => t.bancaId === b.id && t.date === d && t.status !== 'anulado').reduce((a, t) => a + t.total, 0);
       const low = Inv.lowAt(b.id).length, iss = DB.all('issues').filter(i => i.bancaId === b.id && ['abierto', 'en_proceso'].includes(i.status)).length, req = DB.all('requests').filter(r => r.bancaId === b.id && ['pendiente', 'aprobado', 'despachado'].includes(r.status)).length;
-      return `<tr><td><b>${U.esc(b.code)}</b></td><td>${U.esc(b.name)}<br><small>${U.esc(b.phone || '')}</small></td><td>${U.esc(b.type || 'Banca')}</td><td>${U.esc(b.zone || '')}<br><small>${U.esc(b.address || '')}</small></td>
+      return `<tr><td>${b.logo ? `<img src="${U.esc(b.logo)}" style="height:22px;max-width:60px;object-fit:contain;background:#fff;border-radius:4px;vertical-align:middle"> ` : ''}<b>${U.esc(b.code)}</b></td><td>${U.esc(b.name)}<br><small>${U.esc(b.phone || '')}</small></td>${plat ? `<td>${U.esc(consName(b.consorcioId))}</td>` : ''}<td>${U.esc(b.type || 'Banca')}</td><td>${U.esc(b.zone || '')}<br><small>${U.esc(b.address || '')}</small></td>
         <td>${staff.map(u => `<span class="pill" title="${U.esc(Auth.roleName(u))}">${U.esc(u.name)} · <small>${U.esc(Auth.roleName(u))}</small></span>`).join('') || '<span class="mut">—</span>'}</td><td class="num">${U.money(ve)}</td>
         <td>${low ? `<span class="badge b-warn" title="Artículos bajo mínimo">📦 ${low}</span> ` : ''}${req ? `<span class="badge b-info" title="Pedidos abiertos">🚚 ${req}</span> ` : ''}${iss ? `<span class="badge b-bad" title="Errores abiertos">🛠️ ${iss}</span>` : ''}</td>
         <td><span class="badge ${b.status === 'activa' ? 'b-ok' : 'b-bad'}">${b.status}</span></td>
-        <td><div class="row"><button class="btn sm" data-dt="${b.id}">Ver</button>${canEdit ? `<button class="btn sm" data-e="${b.id}">Editar</button><button class="btn sm ${b.status === 'activa' ? 'warn' : ''}" data-t="${b.id}">${b.status === 'activa' ? 'Suspender' : 'Activar'}</button>` : ''}</div></td></tr>`;
-    }).join('') || '<tr><td colspan="9" class="empty">No tiene bancas asignadas</td></tr>'}</tbody></table></div>`;
+        <td><div class="row"><button class="btn sm" data-dt="${b.id}">Ver</button>${canEdit ? `<button class="btn sm" data-e="${b.id}">Editar</button>${Auth.can('consorcio') || Auth.can('bancas.edit') ? `<button class="btn sm" data-br="${b.id}">🎨 Logo y factura</button>` : ''}<button class="btn sm ${b.status === 'activa' ? 'warn' : ''}" data-t="${b.id}">${b.status === 'activa' ? 'Suspender' : 'Activar'}</button>` : ''}</div></td></tr>`;
+    }).join('') || `<tr><td colspan="10" class="empty">${plat && !Auth.consorcios().length ? 'Primero cree un consorcio en <a href="#consorcios">Consorcios</a>.' : 'No hay bancas'}</td></tr>`}</tbody></table></div>`;
+    const fcs = UI.$('#fc'); if (fcs) fcs.onchange = e => { bancas.c = e.target.value; render(); };
+    v.querySelectorAll('[data-br]').forEach(b => b.onclick = () => bancaBrandForm(DB.get('bancas', b.dataset.br)));
     v.querySelectorAll('[data-dt]').forEach(b => b.onclick = () => bancaDetail(DB.get('bancas', b.dataset.dt)));
     if (canEdit) {
       UI.$('#nb').onclick = () => bancaForm(null);
@@ -405,8 +545,10 @@
       <div class="card"><h3>Reportes de errores</h3>${iss.map(i => `<div class="sl"><span>${U.esc(i.code)} ${U.esc(i.title)}</span>${Issues.badge(Issues.ST, i.status)}</div>`).join('') || '<p class="mut">Sin reportes</p>'}</div></div>`, { wide: true });
   }
   function bancaForm(b) {
-    const isNew = !b; b = b || { code: 'B' + String(DB.all('bancas').length + 1).padStart(3, '0'), status: 'activa', type: 'Banca' };
+    const isNew = !b; b = b || { code: 'B' + String(DB.all('bancas').length + 1).padStart(3, '0'), status: 'activa', type: 'Banca', consorcioId: Auth.consorcio() || bancas.c || (Auth.consorcios()[0] || {}).id };
+    if (!Auth.consorcios().length) { UI.toast('Primero cree un consorcio', 'warn'); location.hash = '#consorcios'; return; }
     const m = UI.modal(isNew ? 'Nueva banca / punto de venta' : 'Editar banca', `<form id="bf"><div class="grid g2">
+      ${Auth.isPlatform() ? `<div class="field"><label>Consorcio</label><select name="consorcioId">${Auth.consorcios().map(c => `<option value="${c.id}" ${b.consorcioId === c.id ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}</select></div>` : ''}
       <div class="field"><label>Código (prefijo de tickets)</label><input name="code" value="${U.esc(b.code)}" required maxlength="6"></div>
       <div class="field"><label>Nombre</label><input name="name" value="${U.esc(b.name || '')}" required></div>
       <div class="field"><label>Tipo</label><select name="type">${['Banca', 'Punto de venta', 'Agencia', 'Kiosco', 'Vendedor ambulante', 'Oficina'].map(t => `<option ${b.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -418,11 +560,11 @@
       <div class="field"><label>Límite de venta diario (0 = sin límite)</label><input name="dailyLimit" type="number" value="${b.dailyLimit || 0}"></div></div>
       <label class="chk"><input type="checkbox" name="sports" ${b.sports !== false ? 'checked' : ''}> Vende deportes</label>
       <button class="btn pri">Guardar</button></form>`, { wide: true });
-    m.querySelector('#bf').onsubmit = e => {
+    m.querySelector('#bf').onsubmit = async e => {
       e.preventDefault(); const f = UI.formData(e.target); f.code = f.code.toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (DB.all('bancas').some(x => x.code === f.code && x.id !== b.id)) return UI.toast('Ese código ya existe', 'warn');
-      const rec = Object.assign({}, b, f, { dailyLimit: Number(f.dailyLimit) || 0 }); if (!rec.id) { rec.id = U.uid('b_'); rec.createdAt = Date.now(); }
-      DB.put('bancas', rec); DB.log(isNew ? 'banca.creada' : 'banca.editada', rec.code + ' ' + rec.name); UI.closeModal(); render();
+      const rec = Object.assign({}, b, f, { dailyLimit: Number(f.dailyLimit) || 0, consorcioId: f.consorcioId || b.consorcioId || Auth.consorcio() }); if (!rec.id) { rec.id = U.uid('b_'); rec.createdAt = Date.now(); }
+      DB.put('bancas', rec); try { await DB.confirm('bancas', rec.id); } catch (err) { return UI.toast(err.message, 'bad', 6000); } DB.log(isNew ? 'banca.creada' : 'banca.editada', rec.code + ' ' + rec.name); UI.closeModal(); render();
     };
   }
 
@@ -430,31 +572,37 @@
   function staff(v, act) {
     const sc = Auth.scope();
     const fb = staff.banca || '';
-    const list = DB.all('users').filter(u => sc === null || Auth.userBancas(u).some(id => sc.includes(id))).filter(u => !fb || Auth.userBancas(u).includes(fb))
+    const plat = Auth.isPlatform(); const fc = staff.c || '';
+    const list = DB.all('users').filter(u => plat ? (sc === null || Auth.userBancas(u).some(id => sc.includes(id))) : (u.consorcioId === Auth.consorcio() && (Auth.allBancas() || Auth.userBancas(u).some(id => sc.includes(id)))))
+      .filter(u => !fb || Auth.userBancas(u).includes(fb)).filter(u => !fc || (fc === '-' ? !u.consorcioId : u.consorcioId === fc))
       .sort((a, b) => (Auth.role(a).order || 0) - (Auth.role(b).order || 0) || a.name.localeCompare(b.name));
     const canEdit = Auth.can('staff.edit');
     const d = U.today();
     act.innerHTML = canEdit ? '<button class="btn sm pri" id="nu">+ Nuevo miembro</button>' : '';
-    v.innerHTML = `<div class="card"><div class="row"><label style="margin:0">Banca</label><select id="fb" style="width:auto"><option value="">Todas</option>${Auth.bancas().map(b => `<option value="${b.id}" ${fb === b.id ? 'selected' : ''}>${U.esc(b.code + ' ' + b.name)}</option>`).join('')}</select><span class="small">${list.length} miembros</span></div></div>
+    v.innerHTML = `<div class="card"><div class="row">${plat ? `<label style="margin:0">Consorcio</label><select id="fc" style="width:auto"><option value="">Todos</option><option value="-" ${fc === '-' ? 'selected' : ''}>Plataforma</option>${Auth.consorcios().map(c => `<option value="${c.id}" ${fc === c.id ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}</select>` : ''}<label style="margin:0">Banca</label><select id="fb" style="width:auto"><option value="">Todas</option>${Auth.bancas().map(b => `<option value="${b.id}" ${fb === b.id ? 'selected' : ''}>${U.esc(b.code + ' ' + b.name)}</option>`).join('')}</select><span class="small">${list.length} miembros</span></div></div>
       <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Bancas asignadas</th><th>Comisión</th><th class="num">Ventas hoy</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>
       ${list.map(u => { const ve = DB.all('tickets').filter(t => t.userId === u.id && t.date === d && t.status !== 'anulado').reduce((a, t) => a + t.total, 0); const sh = Shifts.current(u); const r = Auth.role(u); const ids = Auth.userBancas(u);
-      return `<tr><td><b>${U.esc(u.name)}</b><br><small>${U.esc(u.phone || '')} ${U.esc(u.cedula ? '· ' + u.cedula : '')}</small></td><td>${U.esc(u.username)}</td><td><span class="pill">${U.esc(r.name)}</span>${r.scope === 'all' ? '<br><small>ve todas las bancas</small>' : ''}</td>
+      return `<tr><td><b>${U.esc(u.name)}</b><br><small>${U.esc(u.phone || '')} ${U.esc(u.cedula ? '· ' + u.cedula : '')}</small></td><td>${U.esc(u.username)}</td><td><span class="pill">${U.esc(r.name)}</span>${plat ? `<br><small>${u.consorcioId ? U.esc(consName(u.consorcioId)) : '<b>Plataforma</b>'}</small>` : ''}${r.scope === 'all' ? '<br><small>ve todas las bancas' + (u.consorcioId ? ' del consorcio' : '') + '</small>' : ''}</td>
         <td>${r.scope === 'all' ? '<span class="mut">Todas</span>' : ids.map(id => `<span class="pill">${U.esc((DB.get('bancas', id) || {}).code || '?')}</span>`).join('') || '<span class="badge b-warn">Sin banca</span>'}</td>
         <td>${u.commission || 0}%</td><td class="num">${U.money(ve)}</td><td>${u.lastLogin ? U.dt(u.lastLogin) : '—'}${sh ? '<br><span class="badge b-ok">en turno</span>' : ''}</td><td><span class="badge ${u.active ? 'b-ok' : 'b-bad'}">${u.active ? 'activo' : 'inactivo'}</span>${u.lockedUntil > Date.now() ? '<br><span class="badge b-warn">bloqueado</span>' : ''}</td>
         <td>${canEdit ? `<div class="row"><button class="btn sm" data-e="${u.id}">Editar</button><button class="btn sm" data-p="${u.id}">Clave</button></div>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="9" class="empty">Sin staff</td></tr>'}</tbody></table></div>`;
     UI.$('#fb').onchange = e => { staff.banca = e.target.value; render(); };
+    const fcs = UI.$('#fc'); if (fcs) fcs.onchange = e => { staff.c = e.target.value; render(); };
     if (!canEdit) return;
     UI.$('#nu').onclick = () => userForm(null);
     v.querySelectorAll('[data-e]').forEach(b => b.onclick = () => userForm(DB.get('users', b.dataset.e)));
     v.querySelectorAll('[data-p]').forEach(b => b.onclick = async () => { const u = DB.get('users', b.dataset.p); const pw = await UI.prompt('Nueva contraseña para ' + u.username + ' (mín. 4):'); if (!pw || pw.length < 4) return; await Auth.setPassword(u.id, pw); DB.patch('users', u.id, { mustChange: Auth.hasControl(u), fails: 0, lockedUntil: 0 }); DB.log('usuario.reset_clave', u.username); UI.toast('Contraseña cambiada'); render(); });
   }
-  function userForm(u) {
-    const isNew = !u; u = u || { role: 'cajero', active: true, commission: 5, bancaIds: [] };
-    const me = Auth.user(); const myRole = Auth.role(me);
+  function userForm(u, preset) {
+    const isNew = !u; u = u || Object.assign({ role: 'cajero', active: true, commission: 5, bancaIds: [], consorcioId: Auth.consorcio() || staff.c && staff.c !== '-' && staff.c || (Auth.consorcios()[0] || {}).id || '' }, preset || {});
+    const me = Auth.user(); const myRole = Auth.role(me); const plat = Auth.isPlatform();
     const ids = Auth.userBancas(u);
     // solo puede asignar roles con permisos que él mismo tenga (o admin)
-    const roles = DB.all('roles').sort((a, b) => (a.order || 0) - (b.order || 0)).filter(r => myRole.perms.includes('*') || (!r.perms.includes('*') && r.perms.every(p => Auth.can(p)) && (r.scope !== 'all' || myRole.scope === 'all')));
+    const rolesFor = cid => DB.all('roles').sort((a, b) => (a.order || 0) - (b.order || 0)).filter(r => (!r.consorcioId || r.consorcioId === cid) && !(cid && r.perms.includes('*')) && (Auth.can('*') || (!r.perms.includes('*') && r.perms.filter(p => !(Auth.PLATFORM_PERMS.includes(p) && cid)).every(p => Auth.can(p)) && (r.scope !== 'all' || myRole.scope === 'all'))));
+    const roles = rolesFor(u.consorcioId || '');
+    const bancasFor = cid => Auth.bancas().filter(b => !cid || b.consorcioId === cid);
     const m = UI.modal(isNew ? 'Nuevo miembro del staff' : 'Editar ' + U.esc(u.name), `<form id="uf"><div class="grid g2">
+      ${plat ? `<div class="field"><label>Consorcio</label><select name="consorcioId" id="csel" ${!isNew && u.id === me.id ? 'disabled' : ''}><option value="">— Plataforma (AuraSport) —</option>${Auth.consorcios().map(c => `<option value="${c.id}" ${u.consorcioId === c.id ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}</select></div>` : ''}
       <div class="field"><label>Nombre completo</label><input name="name" value="${U.esc(u.name || '')}" required></div>
       <div class="field"><label>Usuario</label><input name="username" value="${U.esc(u.username || '')}" required ${isNew ? '' : 'readonly'}></div>
       <div class="field"><label>Rol</label><select name="role" id="rsel">${roles.map(r => `<option value="${r.id}" ${u.role === r.id ? 'selected' : ''}>${U.esc(r.name)}</option>`).join('')}</select><small id="rdesc"></small></div>
@@ -462,22 +610,26 @@
       <div class="field"><label>Cédula</label><input name="cedula" value="${U.esc(u.cedula || '')}"></div>
       <div class="field"><label>Teléfono</label><input name="phone" value="${U.esc(u.phone || '')}"></div>
       ${isNew ? '<div class="field"><label>Contraseña inicial</label><input name="pw" type="text" required minlength="4"></div>' : ''}</div>
-      <div class="field" id="bwrap"><label>Bancas asignadas (puede marcar varias)</label><div class="chips">${Auth.bancas().map(b => `<label class="chipc"><input type="checkbox" name="b_${b.id}" ${ids.includes(b.id) ? 'checked' : ''}> ${U.esc(b.code)} ${U.esc(b.name)}</label>`).join('')}</div></div>
+      <div class="field" id="bwrap"><label>Bancas asignadas (puede marcar varias)</label><div class="chips" id="bchips"></div></div>
       <label class="chk"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Activo</label>
       <button class="btn pri">Guardar</button></form>`, { wide: true });
-    const sel = m.querySelector('#rsel');
-    const upd = () => { const r = DB.get('roles', sel.value) || {}; m.querySelector('#rdesc').textContent = (r.desc || '') + (r.scope === 'all' ? ' · Ve todas las bancas.' : ' · Ve solo sus bancas asignadas.'); };
-    sel.onchange = upd; upd();
+    const sel = m.querySelector('#rsel'); const csel = m.querySelector('#csel');
+    const cid = () => csel ? csel.value : (u.consorcioId || Auth.consorcio());
+    const drawB = () => { const keep = new Set([...m.querySelectorAll('#bchips input:checked')].map(i => i.name.slice(2)).concat(m.querySelector('#bchips').dataset.init ? [] : ids)); m.querySelector('#bchips').dataset.init = 1;
+      m.querySelector('#bchips').innerHTML = bancasFor(cid()).map(b => `<label class="chipc"><input type="checkbox" name="b_${b.id}" ${keep.has(b.id) ? 'checked' : ''}> ${U.esc(b.code)} ${U.esc(b.name)}</label>`).join('') || '<span class="mut">Este consorcio aún no tiene bancas</span>'; };
+    const upd = () => { const r = DB.get('roles', sel.value) || {}; m.querySelector('#rdesc').textContent = (r.desc || '') + (r.scope === 'all' ? (cid() ? ' · Ve todas las bancas del consorcio.' : ' · Ve todos los consorcios.') : ' · Ve solo sus bancas asignadas.'); };
+    if (csel) csel.onchange = () => { const cur = sel.value; sel.innerHTML = rolesFor(cid()).map(r => `<option value="${r.id}" ${cur === r.id ? 'selected' : ''}>${U.esc(r.name)}</option>`).join(''); drawB(); upd(); };
+    sel.onchange = upd; drawB(); upd();
     m.querySelector('#uf').onsubmit = async e => {
       e.preventDefault(); const f = UI.formData(e.target); f.username = f.username.trim().toLowerCase();
       if (isNew && DB.all('users').some(x => x.username === f.username)) return UI.toast('Ese usuario ya existe', 'warn');
       const role = DB.get('roles', f.role);
       // conservar bancas que el editor no puede ver
       const hidden = ids.filter(id => !Auth.sees(id));
-      const bancaIds = hidden.concat(Auth.bancas().filter(b => f['b_' + b.id]).map(b => b.id));
+      const bancaIds = hidden.concat(bancasFor(cid()).filter(b => f['b_' + b.id]).map(b => b.id));
       if (role.scope !== 'all' && !bancaIds.length) return UI.toast('Asigne al menos una banca', 'warn');
       if (u.id === me.id && (!role.perms.includes('*') && myRole.perms.includes('*') || !f.active)) return UI.toast('No puede quitarse su propio acceso de administrador', 'warn');
-      const rec = Object.assign({}, u, { name: f.name, username: f.username, role: f.role, bancaIds, cedula: f.cedula, phone: f.phone, commission: Number(f.commission) || 0, active: f.active });
+      const rec = Object.assign({}, u, { consorcioId: cid() || '', name: f.name, username: f.username, role: f.role, bancaIds, cedula: f.cedula, phone: f.phone, commission: Number(f.commission) || 0, active: f.active });
       delete rec.bancaId;
       if (isNew) { rec.id = U.uid('u_'); rec.pass = await U.sha('bancard:' + f.pw); rec.mustChange = Auth.hasControl(rec); rec.createdAt = Date.now(); }
       DB.put('users', rec);
@@ -487,31 +639,35 @@
 
   /* ======================= ROLES ======================= */
   function roles(v, act) {
-    const list = DB.all('roles').sort((a, b) => (a.order || 0) - (b.order || 0));
+    const list = DB.all('roles').filter(r => (!r.consorcioId || Auth.seesConsorcio(r.consorcioId)) && (Auth.isPlatform() || !r.perms.includes('*'))).sort((a, b) => (a.order || 0) - (b.order || 0));
     act.innerHTML = '<button class="btn sm pri" id="nr">+ Nuevo rol</button>';
+    const editable = r => !r.system && (Auth.isPlatform() || r.consorcioId === Auth.consorcio());
     v.innerHTML = `<p class="mut">Cada miembro del staff tiene un rol. El rol define qué puede hacer y si ve <b>todas las bancas</b> o <b>solo las asignadas</b>.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Rol</th><th>Alcance</th><th>Accesos</th><th>Permisos</th><th class="num">Usuarios</th><th></th></tr></thead><tbody>
       ${list.map(r => { const n = DB.all('users').filter(u => u.role === r.id).length; const all = r.perms.includes('*'); return `<tr><td><b>${U.esc(r.name)}</b><br><small>${U.esc(r.desc || '')}</small></td><td>${r.scope === 'all' ? '<span class="badge b-info">Todas las bancas</span>' : '<span class="badge b-mute">Bancas asignadas</span>'}</td>
         <td>${Auth.can('pos', { role: r.id }) ? '<span class="pill">App de venta</span>' : ''}${Auth.hasControl({ role: r.id }) ? '<span class="pill">Panel</span>' : ''}</td><td class="small">${all ? 'Todos' : r.perms.length + ' permisos'}</td><td class="num">${n}</td>
-        <td>${r.system ? '<span class="small mut">fijo</span>' : `<div class="row"><button class="btn sm" data-e="${r.id}">Editar</button><button class="btn sm" data-c="${r.id}">Duplicar</button></div>`}</td></tr>`; }).join('')}</tbody></table></div>
+        <td>${r.system ? '<span class="small mut">fijo</span>' : `<div class="row">${editable(r) ? `<button class="btn sm" data-e="${r.id}">Editar</button>` : '<span class="small mut">general</span>'}<button class="btn sm" data-c="${r.id}">Duplicar</button></div>`}${r.consorcioId && Auth.isPlatform() ? `<br><small>${U.esc(consName(r.consorcioId))}</small>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
       <div class="card" style="margin-top:12px"><h3>Matriz de permisos</h3><div class="tbl-wrap"><table><thead><tr><th>Permiso</th>${list.map(r => `<th>${U.esc(r.name)}</th>`).join('')}</tr></thead><tbody>
       ${Auth.PERMS.map(([g, ps]) => `<tr><td colspan="${list.length + 1}"><b>${g}</b></td></tr>` + ps.map(([k, n]) => `<tr><td class="small">${U.esc(n)}</td>${list.map(r => `<td>${r.perms.includes('*') || r.perms.includes(k) ? '✅' : ''}</td>`).join('')}</tr>`).join('')).join('')}</tbody></table></div></div>`;
     UI.$('#nr').onclick = () => roleForm(null);
     v.querySelectorAll('[data-e]').forEach(b => b.onclick = () => roleForm(DB.get('roles', b.dataset.e)));
-    v.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { const r = DB.get('roles', b.dataset.c); roleForm(Object.assign({}, r, { id: null, name: r.name + ' (copia)', system: false })); });
+    v.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { const r = DB.get('roles', b.dataset.c); roleForm(Object.assign({}, r, { id: null, name: r.name + ' (copia)', system: false, consorcioId: Auth.consorcio() })); });
   }
   function roleForm(r) {
-    const isNew = !r || !r.id; r = r || { name: '', scope: 'assigned', perms: ['pos'], order: 10 };
+    const isNew = !r || !r.id; r = r || { name: '', scope: 'assigned', perms: ['pos'], order: 10, consorcioId: Auth.consorcio() };
+    const platOnly = k => Auth.PLATFORM_PERMS.includes(k) && (!Auth.isPlatform() || r.consorcioId);
     const m = UI.modal(isNew ? 'Nuevo rol' : 'Editar rol', `<form id="rf"><div class="grid g2">
       <div class="field"><label>Nombre del rol</label><input name="name" value="${U.esc(r.name)}" required></div>
-      <div class="field"><label>Alcance</label><select name="scope"><option value="assigned" ${r.scope !== 'all' ? 'selected' : ''}>Solo bancas asignadas</option><option value="all" ${r.scope === 'all' ? 'selected' : ''}>Todas las bancas</option></select></div></div>
+      <div class="field"><label>Alcance</label><select name="scope"><option value="assigned" ${r.scope !== 'all' ? 'selected' : ''}>Solo bancas asignadas</option><option value="all" ${r.scope === 'all' ? 'selected' : ''}>Todas las bancas${Auth.isPlatform() ? '' : ' del consorcio'}</option></select></div>
+      ${Auth.isPlatform() && isNew ? `<div class="field"><label>Rol de</label><select name="consorcioId"><option value="">Uso general (todos los consorcios)</option>${Auth.consorcios().map(c => `<option value="${c.id}" ${r.consorcioId === c.id ? 'selected' : ''}>Solo ${U.esc(c.name)}</option>`).join('')}</select></div>` : ''}</div>
       <div class="field"><label>Descripción</label><input name="desc" value="${U.esc(r.desc || '')}"></div>
-      ${Auth.PERMS.map(([g, ps]) => `<div class="perm-g"><h4>${g}</h4><div class="chips">${ps.map(([k, n]) => `<label class="chipc"><input type="checkbox" name="p_${k}" ${r.perms.includes(k) ? 'checked' : ''}> ${U.esc(n)}</label>`).join('')}</div></div>`).join('')}
+      ${Auth.PERMS.map(([g, ps]) => `<div class="perm-g"><h4>${g}</h4><div class="chips">${ps.filter(([k]) => !platOnly(k)).map(([k, n]) => `<label class="chipc"><input type="checkbox" name="p_${k}" ${r.perms.includes(k) ? 'checked' : ''}> ${U.esc(n)}</label>`).join('')}</div></div>`).join('')}
       <div class="row"><button class="btn pri">Guardar rol</button>${!isNew ? '<button type="button" class="btn bad" id="dr">Eliminar</button>' : ''}</div></form>`, { wide: true });
     m.querySelector('#rf').onsubmit = e => {
       e.preventDefault(); const f = UI.formData(e.target);
       const perms = Auth.ALL_PERMS.filter(k => f['p_' + k]);
-      const rec = Object.assign({}, r, { name: f.name.trim(), scope: f.scope, desc: f.desc, perms }); if (!rec.id) rec.id = U.uid('rol_');
+      const rec = Object.assign({}, r, { name: f.name.trim(), scope: f.scope, desc: f.desc, perms: perms.filter(k => !platOnly(k)) }); if (!rec.id) rec.id = U.uid('rol_');
+      if (isNew && Auth.isPlatform()) rec.consorcioId = f.consorcioId || '';
       DB.put('roles', rec); DB.log(isNew ? 'rol.creado' : 'rol.editado', `${rec.name}: ${perms.join(', ')}`); UI.closeModal(); render();
     };
     const dr = m.querySelector('#dr'); if (dr) dr.onclick = async () => { if (DB.all('users').some(u => u.role === r.id)) return UI.toast('Hay usuarios con este rol: cámbielos primero', 'warn'); if (await UI.confirm('¿Eliminar el rol ' + r.name + '?')) { DB.remove('roles', r.id); DB.log('rol.eliminado', r.name); UI.closeModal(); render(); } };
@@ -519,27 +675,32 @@
 
   /* ======================= INVENTARIO ======================= */
   function inventario(v, act) {
-    const locs = (Auth.allBancas() ? [{ id: 'central', code: 'ALM', name: 'Almacén central' }] : []).concat(Auth.bancas());
+    const locs = centralLocs().concat(Auth.bancas());
     const loc = inventario.loc && locs.some(l => l.id === inventario.loc) ? inventario.loc : (locs[0] || {}).id;
     const tab = inventario.tab || 'exist';
-    const items = DB.all('items').filter(i => i.active !== false).sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
-    const canEdit = Auth.can('inventory.edit');
-    act.innerHTML = canEdit ? '<button class="btn sm pri" id="ent">+ Entrada (compra)</button><button class="btn sm" id="cat">Catálogo de artículos</button>' : '';
+    const items = Inv.itemsFor(loc);
+    const canEdit = Auth.can('inventory.edit'); const cen = loc && !Inv.isCentral(loc) ? Inv.centralForBanca(loc) : '';
+    act.innerHTML = (canEdit ? '<button class="btn sm pri" id="ent">+ Entrada (compra)</button><button class="btn sm" id="cat">Catálogo de artículos</button>' : '') + Docs.buttons('inv');
+    Docs.bind(act, 'inv', () => ({ title: 'Existencias de inventario', subtitle: Inv.locName(loc), ctx: Inv.isCentral(loc) ? { consorcioId: String(loc).startsWith('cen:') ? loc.slice(4) : '' } : { bancaId: loc },
+      sections: [{ columns: [{ h: 'Artículo', w: 3 }, { h: 'Categoría', w: 1.5 }, { h: 'Existencia', align: 'right' }, { h: 'Mínimo', align: 'right' }, { h: 'Estado' }],
+        rows: items.map(i => { const q = Inv.qty(loc, i.id), mn = Inv.min(loc, i); return [i.name, i.category || '', q + ' ' + (i.unit || ''), mn, !mn ? '' : q <= 0 ? 'AGOTADO' : q <= mn ? 'Bajo mínimo' : 'OK']; }) }],
+      signatures: ['Contado por', 'Revisado por'] }), () => 'inventario_' + Inv.locName(loc) + '_' + U.today());
     const tabs = `<div class="tabs">${[['exist', 'Existencias por ubicación'], ['matriz', 'Vista general'], ['mov', 'Movimientos']].map(([k, n]) => `<button class="tab ${tab === k ? 'on' : ''}" data-it="${k}">${n}</button>`).join('')}</div>`;
     if (!loc) { v.innerHTML = '<div class="empty">No tiene bancas asignadas</div>'; return; }
     if (tab === 'exist') {
       v.innerHTML = tabs + `<div class="card"><div class="row"><label style="margin:0">Ubicación</label><select id="loc" style="width:auto">${locs.map(l => `<option value="${l.id}" ${l.id === loc ? 'selected' : ''}>${U.esc(l.name)}</option>`).join('')}</select>
-        ${loc !== 'central' && Auth.can('requests.create') ? '<button class="btn sm" id="ped">Pedir material para esta banca</button>' : ''}</div></div>
-        <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Artículo</th><th>Categoría</th><th class="num">Existencia</th><th class="num">Mínimo</th>${loc !== 'central' ? '<th class="num">En camino</th><th class="num">En almacén</th>' : ''}<th>Estado</th><th></th></tr></thead><tbody>
+        ${!Inv.isCentral(loc) && Auth.can('requests.create') ? '<button class="btn sm" id="ped">Pedir material para esta banca</button>' : ''}</div></div>
+        <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Artículo</th><th>Categoría</th><th class="num">Existencia</th><th class="num">Mínimo</th>${!Inv.isCentral(loc) ? '<th class="num">En camino</th><th class="num">En almacén</th>' : ''}<th>Estado</th><th></th></tr></thead><tbody>
         ${items.map(i => { const q = Inv.qty(loc, i.id), mn = Inv.min(loc, i); const st = !mn ? '' : q <= 0 ? '<span class="badge b-bad">Agotado</span>' : q <= mn ? '<span class="badge b-warn">Bajo mínimo</span>' : '<span class="badge b-ok">OK</span>';
-        return `<tr><td><b>${U.esc(i.name)}</b></td><td>${U.esc(i.category || '')}</td><td class="num ${q <= 0 && mn ? 'zero' : q <= mn && mn ? 'low' : ''}">${q} ${U.esc(i.unit)}</td><td class="num">${mn}</td>${loc !== 'central' ? `<td class="num">${Inv.inTransit(loc, i.id) || ''}</td><td class="num">${Inv.qty('central', i.id)}</td>` : ''}<td>${st}</td>
-          <td><div class="row">${Auth.can('inventory.use') && loc !== 'central' ? `<button class="btn sm" data-use="${i.id}">Consumo</button>` : ''}${canEdit ? `<button class="btn sm" data-cnt="${i.id}">Conteo</button>${loc !== 'central' ? `<button class="btn sm" data-tr="${i.id}">Transferir</button>` : ''}` : ''}</div></td></tr>`; }).join('')}</tbody></table></div>`;
+        return `<tr><td><b>${U.esc(i.name)}</b></td><td>${U.esc(i.category || '')}</td><td class="num ${q <= 0 && mn ? 'zero' : q <= mn && mn ? 'low' : ''}">${q} ${U.esc(i.unit)}</td><td class="num">${mn}</td>${!Inv.isCentral(loc) ? `<td class="num">${Inv.inTransit(loc, i.id) || ''}</td><td class="num">${Inv.qty(cen, i.id)}</td>` : ''}<td>${st}</td>
+          <td><div class="row">${Auth.can('inventory.use') && !Inv.isCentral(loc) ? `<button class="btn sm" data-use="${i.id}">Consumo</button>` : ''}${canEdit ? `<button class="btn sm" data-cnt="${i.id}">Conteo</button>${!Inv.isCentral(loc) ? `<button class="btn sm" data-tr="${i.id}">Transferir</button>` : ''}` : ''}</div></td></tr>`; }).join('')}</tbody></table></div>`;
       UI.$('#loc').onchange = e => { inventario.loc = e.target.value; render(); };
       const pb = UI.$('#ped'); if (pb) pb.onclick = () => requestForm(loc);
       v.querySelectorAll('[data-use]').forEach(b => b.onclick = () => qtyModal('Registrar consumo', DB.get('items', b.dataset.use), (q, note) => Inv.move({ type: 'consumo', itemId: b.dataset.use, qty: q, from: loc, note })));
       v.querySelectorAll('[data-cnt]').forEach(b => b.onclick = async () => { const it = DB.get('items', b.dataset.cnt); const c = await UI.prompt(`Conteo físico de ${it.name} en ${Inv.locName(loc)} (actual en sistema: ${Inv.qty(loc, it.id)})`, Inv.qty(loc, it.id)); if (c === null || c === '' || isNaN(c)) return; const d = Inv.setCount(loc, it.id, Number(c)); UI.toast(d ? `Ajuste de ${d > 0 ? '+' : ''}${d}` : 'Sin diferencia'); render(); });
       v.querySelectorAll('[data-tr]').forEach(b => b.onclick = () => transferModal(DB.get('items', b.dataset.tr), loc));
     } else if (tab === 'matriz') {
+      const items = [...new Map(locs.flatMap(l => Inv.itemsFor(l.id)).map(i => [i.id, i])).values()];
       v.innerHTML = tabs + `<div class="tbl-wrap"><table><thead><tr><th>Artículo</th>${locs.map(l => `<th class="num">${U.esc(l.code || 'ALM')}</th>`).join('')}<th class="num">Total</th></tr></thead><tbody>
         ${items.map(i => `<tr><td>${U.esc(i.name)}</td>${locs.map(l => { const q = Inv.qty(l.id, i.id), mn = Inv.min(l.id, i); return `<td class="num ${q <= 0 && mn ? 'zero' : q <= mn && mn ? 'low' : ''}">${q}</td>`; }).join('')}<td class="num"><b>${locs.reduce((a, l) => a + Inv.qty(l.id, i.id), 0)}</b></td></tr>`).join('')}</tbody></table></div>
         <p class="small"><span class="low">Amarillo</span> = bajo mínimo · <span class="zero">Rojo</span> = agotado.</p>`;
@@ -560,13 +721,14 @@
     m.querySelector('#qf').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); try { fn(Number(f.q), f.n); UI.closeModal(); UI.toast('Registrado'); render(); } catch (err) { UI.toast(err.message, 'bad'); } };
   }
   function transferModal(item, from) {
-    const dests = (Auth.allBancas() ? [{ id: 'central', name: 'Almacén central' }] : []).concat(Auth.bancas()).filter(l => l.id !== from);
+    const cid = Inv.isCentral(from) ? (String(from).startsWith('cen:') ? from.slice(4) : null) : (DB.get('bancas', from) || {}).consorcioId;
+    const dests = centralLocs().concat(Auth.bancas()).filter(l => l.id !== from && (cid === null || (Inv.isCentral(l.id) ? l.id === Inv.centralOf(cid) : (DB.get('bancas', l.id) || {}).consorcioId === cid)));
     const m = UI.modal('Transferir ' + U.esc(item.name), `<form id="tf"><p class="mut">Desde: ${U.esc(Inv.locName(from))} (hay ${Inv.qty(from, item.id)})</p><div class="field"><label>Hacia</label><select name="to">${dests.map(l => `<option value="${l.id}">${U.esc(l.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Cantidad</label><input name="q" type="number" min="1" step="any" required></div><div class="field"><label>Nota</label><input name="n"></div><button class="btn pri">Transferir</button></form>`);
-    m.querySelector('#tf').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); try { Inv.move({ type: f.to === 'central' ? 'devolucion' : 'transferencia', itemId: item.id, qty: Number(f.q), from, to: f.to, note: f.n }); DB.log('inventario.transferencia', `${item.name} ${f.q} ${Inv.locName(from)} → ${Inv.locName(f.to)}`); UI.closeModal(); render(); } catch (err) { UI.toast(err.message, 'bad'); } };
+    m.querySelector('#tf').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); try { Inv.move({ type: Inv.isCentral(f.to) ? 'devolucion' : 'transferencia', itemId: item.id, qty: Number(f.q), from, to: f.to, note: f.n }); DB.log('inventario.transferencia', `${item.name} ${f.q} ${Inv.locName(from)} → ${Inv.locName(f.to)}`); UI.closeModal(); render(); } catch (err) { UI.toast(err.message, 'bad'); } };
   }
   function entryModal(locs) {
-    const items = DB.all('items').filter(i => i.active !== false);
+    const items = [...new Map(locs.flatMap(l => Inv.itemsFor(l.id)).map(i => [i.id, i])).values()];
     const m = UI.modal('Entrada de inventario', `<form id="ef"><div class="grid g2"><div class="field"><label>Ubicación</label><select name="to">${locs.map(l => `<option value="${l.id}">${U.esc(l.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Artículo</label><select name="item">${items.map(i => `<option value="${i.id}">${U.esc(i.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Cantidad</label><input name="q" type="number" min="1" step="any" required></div><div class="field"><label>Costo total (opcional)</label><input name="c" type="number" step="0.01"></div></div>
@@ -574,13 +736,14 @@
     m.querySelector('#ef').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); try { Inv.move({ type: 'entrada', itemId: f.item, qty: Number(f.q), to: f.to, note: (f.n || '') + (f.c ? ` · Costo ${U.money(f.c)}` : '') }); DB.log('inventario.entrada', `${(DB.get('items', f.item) || {}).name} +${f.q} ${Inv.locName(f.to)}`); UI.closeModal(); UI.toast('Entrada registrada'); render(); } catch (err) { UI.toast(err.message, 'bad'); } };
   }
   function catalogModal() {
-    const items = DB.all('items').sort((a, b) => a.name.localeCompare(b.name));
+    const mine = i => Auth.isPlatform() ? true : i.consorcioId === Auth.consorcio();
+    const items = DB.all('items').filter(i => !i.consorcioId || Auth.seesConsorcio(i.consorcioId)).sort((a, b) => a.name.localeCompare(b.name));
     const m = UI.modal('Catálogo de artículos', `<table><thead><tr><th>Artículo</th><th>Categoría</th><th>Unidad</th><th>Mín. banca</th><th>Mín. almacén</th><th>Activo</th></tr></thead><tbody>
-      ${items.map(i => `<tr data-row="${i.id}"><td><input name="name" value="${U.esc(i.name)}"></td><td><input name="category" value="${U.esc(i.category || '')}" style="width:120px"></td><td><input name="unit" value="${U.esc(i.unit || '')}" style="width:90px"></td><td><input name="minBanca" type="number" value="${i.minBanca || 0}" style="width:80px"></td><td><input name="minCentral" type="number" value="${i.minCentral || 0}" style="width:80px"></td><td><input type="checkbox" name="active" ${i.active !== false ? 'checked' : ''}></td></tr>`).join('')}</tbody></table>
+      ${Auth.isPlatform() ? '' : '<tr><td colspan="6" class="small mut">Los artículos del catálogo general los mantiene la plataforma; puede agregar artículos propios de su consorcio.</td></tr>'}${items.map(i => !mine(i) ? `<tr><td>${U.esc(i.name)}</td><td>${U.esc(i.category || '')}</td><td>${U.esc(i.unit || '')}</td><td>${i.minBanca || 0}</td><td>${i.minCentral || 0}</td><td><small>general</small></td></tr>` : `<tr data-row="${i.id}"><td><input name="name" value="${U.esc(i.name)}"></td><td><input name="category" value="${U.esc(i.category || '')}" style="width:120px"></td><td><input name="unit" value="${U.esc(i.unit || '')}" style="width:90px"></td><td><input name="minBanca" type="number" value="${i.minBanca || 0}" style="width:80px"></td><td><input name="minCentral" type="number" value="${i.minCentral || 0}" style="width:80px"></td><td><input type="checkbox" name="active" ${i.active !== false ? 'checked' : ''}></td></tr>`).join('')}</tbody></table>
       <div class="row" style="margin-top:10px"><button class="btn pri" id="sv">Guardar cambios</button></div><hr>
       <form id="ni" class="row"><input name="name" placeholder="Nuevo artículo" required style="flex:2"><input name="category" placeholder="Categoría" style="flex:1"><input name="unit" placeholder="Unidad" style="width:100px"><input name="minBanca" type="number" placeholder="Mín. banca" style="width:110px"><button class="btn">Agregar</button></form>`, { wide: true });
     m.querySelector('#sv').onclick = () => { m.querySelectorAll('[data-row]').forEach(tr => { const it = DB.get('items', tr.dataset.row); const g = n => tr.querySelector(`[name=${n}]`); DB.put('items', Object.assign({}, it, { name: g('name').value, category: g('category').value, unit: g('unit').value, minBanca: Number(g('minBanca').value) || 0, minCentral: Number(g('minCentral').value) || 0, active: g('active').checked })); }); DB.log('inventario.catalogo', 'editado'); UI.closeModal(); UI.toast('Catálogo guardado'); render(); };
-    m.querySelector('#ni').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); DB.put('items', { id: U.uid('it_'), name: f.name, category: f.category, unit: f.unit || 'unidad', minBanca: Number(f.minBanca) || 0, minCentral: 0, active: true }); DB.log('inventario.articulo', f.name); catalogModal(); };
+    m.querySelector('#ni').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); DB.put('items', { id: U.uid('it_'), consorcioId: Auth.consorcio(), name: f.name, category: f.category, unit: f.unit || 'unidad', minBanca: Number(f.minBanca) || 0, minCentral: 0, active: true }); DB.log('inventario.articulo', f.name); catalogModal(); };
   }
 
   /* ======================= PEDIDOS ======================= */

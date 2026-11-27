@@ -1,15 +1,15 @@
 /* =========================================================
-   BancaRD — núcleo compartido (datos, reglas, calificación)
+   AuraSport — núcleo compartido (datos, reglas, calificación)
    Funciona 100% en el navegador (localStorage) y, si existe
    el servidor opcional (/api), sincroniza entre bancas.
    ========================================================= */
 (function (global) {
   'use strict';
 
-  const VERSION = '2.0.0';
+  const VERSION = '3.0.0';
   const LS_KEY = 'bancard_db_v2';
   const SS_KEY = 'bancard_session_v1';
-  const COLLS = ['config', 'bancas', 'users', 'roles', 'lotteries', 'results', 'leagues', 'games',
+  const COLLS = ['config', 'consorcios', 'bancas', 'users', 'roles', 'lotteries', 'results', 'leagues', 'games',
     'tickets', 'shifts', 'limits', 'audit', 'expenses', 'items', 'stock', 'movements', 'locations', 'requests', 'issues', 'syserrors'];
 
   /* ---------------- utilidades ---------------- */
@@ -44,6 +44,7 @@
       if (!ts) return '';
       return new Intl.DateTimeFormat('es-DO', { timeZone: U.tz(), day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(ts));
     },
+    d(x) { if (!x) return ''; if (typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x)) { const [y, m, dd] = x.split('-'); return `${dd}/${m}/${y}`; } return new Intl.DateTimeFormat('es-DO', { timeZone: U.tz(), day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(x)); },
     time(ts) {
       return new Intl.DateTimeFormat('es-DO', { timeZone: U.tz(), hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(ts));
     },
@@ -83,7 +84,7 @@
   /* ---------------- datos semilla ---------------- */
   const DEFAULT_CONFIG = {
     id: 'main',
-    company: 'Consorcio BancaRD',
+    company: 'AuraSport',
     rnc: '',
     phone: '809-000-0000',
     currency: 'RD$',
@@ -241,11 +242,11 @@
     emit(c) { emit(c); },
     log(action, detail, extra) {
       const s = Auth.user();
-      const rec = { id: U.uid('a_'), at: Date.now(), user: s ? s.username : 'sistema', userId: s ? s.id : '', bancaId: s ? (s.bancaId || '') : '', action, detail: String(detail || '').slice(0, 500), extra: extra || null };
+      const rec = { id: U.uid('a_'), at: Date.now(), user: s ? s.username : 'sistema', userId: s ? s.id : '', consorcioId: s ? (s.consorcioId || '') : '', bancaId: s ? (s.bancaId || '') : '', action, detail: String(detail || '').slice(0, 500), extra: extra || null };
       rec.updatedAt = rec.at; state.audit[rec.id] = rec; if (DB.onPut) DB.onPut('audit', rec); DB.save();
       if (serverMode) push('audit', rec);
     },
-    exportJSON() { return JSON.stringify({ app: 'BancaRD', version: VERSION, exportedAt: new Date().toISOString(), data: state }, null, 1); },
+    exportJSON() { return JSON.stringify({ app: 'AuraSport', version: VERSION, exportedAt: new Date().toISOString(), data: state }, null, 1); },
     importJSON(text) {
       if (serverMode) throw new Error('En modo servidor los respaldos se hacen en el servidor');
       const o = JSON.parse(text); if (!o || !o.data) throw new Error('Archivo inválido');
@@ -362,11 +363,13 @@
     ['Puntos de venta y staff', [['bancas.view', 'Ver bancas'], ['bancas.edit', 'Crear / editar / suspender bancas'], ['staff.view', 'Ver staff'], ['staff.edit', 'Crear / editar staff y claves'], ['roles', 'Administrar roles y permisos']]],
     ['Inventario', [['inventory.view', 'Ver existencias'], ['inventory.use', 'Registrar consumo en su banca'], ['inventory.edit', 'Catálogo, entradas y ajustes de inventario'], ['requests.create', 'Pedir material'], ['requests.approve', 'Aprobar, rechazar y despachar pedidos']]],
     ['Soporte', [['issues.create', 'Reportar errores / problemas'], ['issues.manage', 'Gestionar reportes (asignar, resolver)'], ['syserrors', 'Ver errores técnicos del sistema']]],
-    ['Sistema', [['config', 'Configuración general, premios y respaldo']]],
+    ['Sistema', [['consorcio', 'Datos, logo, tema y plantilla de factura del consorcio y sus bancas'], ['config', 'Configuración general de la plataforma, premios y respaldo']]],
   ];
   const ALL_PERMS = PERMS.flatMap(g => g[1].map(p => p[0]));
   const DEFAULT_ROLES = [
-    { id: 'admin', name: 'Administrador', scope: 'all', perms: ['*'], system: true, order: 0, desc: 'Dueño del consorcio: acceso total.' },
+    { id: 'admin', name: 'Administrador de plataforma', scope: 'all', perms: ['*'], system: true, order: 0, desc: 'Dueño de AuraSport: acceso total a todos los consorcios.' },
+    { id: 'admin_consorcio', name: 'Administrador de consorcio', scope: 'all', order: 0.5, desc: 'Dueño de un consorcio: todas sus bancas, staff, inventario, tema, logo y facturas.',
+      perms: ['pos', 'pos.multi', 'dashboard', 'tickets.view', 'tickets.void', 'tickets.void_late', 'tickets.pay', 'reports', 'shifts.view', 'shifts.close', 'audit.view', 'limits', 'bancas.view', 'bancas.edit', 'staff.view', 'staff.edit', 'roles', 'inventory.view', 'inventory.use', 'inventory.edit', 'requests.create', 'requests.approve', 'issues.create', 'issues.manage', 'consorcio'] },
     { id: 'supervisor', name: 'Supervisor', scope: 'assigned', order: 1, desc: 'Supervisa sus bancas asignadas, aprueba pedidos y atiende reportes.',
       perms: ['pos', 'pos.multi', 'dashboard', 'tickets.view', 'tickets.void', 'reports', 'shifts.view', 'shifts.close', 'audit.view', 'limits', 'bancas.view', 'staff.view', 'inventory.view', 'inventory.use', 'requests.create', 'requests.approve', 'issues.create', 'issues.manage'] },
     { id: 'operador', name: 'Operador central', scope: 'all', order: 2, desc: 'Oficina central: resultados, líneas y topes.',
@@ -376,11 +379,13 @@
     { id: 'cajero', name: 'Cajero / Vendedor', scope: 'assigned', order: 4, desc: 'Vende en su banca, ve su existencia, pide material y reporta errores.',
       perms: ['pos', 'inventory.view', 'inventory.use', 'requests.create', 'issues.create'] },
   ];
+  /* permisos que solo tienen sentido a nivel de plataforma (no se dan a usuarios de un consorcio) */
+  const PLATFORM_PERMS = ['results', 'games', 'lotteries', 'config', 'syserrors'];
   const CONTROL_PERMS = ALL_PERMS.filter(p => !['pos', 'pos.multi', 'inventory.view', 'inventory.use', 'requests.create', 'issues.create', 'tickets.void_late', 'tickets.pay'].includes(p));
   const POS_KEY = 'bancard_pos_banca';
 
   const Auth = {
-    PERMS, ALL_PERMS, DEFAULT_ROLES,
+    PERMS, ALL_PERMS, DEFAULT_ROLES, PLATFORM_PERMS,
     role(u) { return DB.get('roles', u && u.role) || { id: u && u.role, name: u && u.role, perms: [], scope: 'assigned' }; },
     roleName(u) { return Auth.role(u).name; },
     /* usuario en sesión (copia), con bancaIds normalizado y bancaId = banca activa en la venta */
@@ -390,15 +395,26 @@
         const r = DB.get('users', s.id); if (!r || !r.active) return null;
         const u = Object.assign({}, r); u.bancaIds = Auth.userBancas(r);
         const cur = sessionStorage.getItem(POS_KEY);
-        const allowed = Auth.allBancas(u) ? DB.all('bancas').map(b => b.id) : u.bancaIds;
+        const sc = Auth.scope(u); const allowed = sc === null ? DB.all('bancas').map(b => b.id) : sc;
         u.bancaId = cur && allowed.includes(cur) ? cur : (u.bancaIds.length === 1 ? u.bancaIds[0] : '');
         return u;
       } catch (e) { return null; }
     },
     userBancas(u) { return Array.isArray(u.bancaIds) ? u.bancaIds.slice() : (u.bancaId ? [u.bancaId] : []); },
     allBancas(u) { u = u || Auth.user(); return !!u && Auth.role(u).scope === 'all'; },
+    /* consorcio del usuario ('' = usuario de la plataforma, ve todos los consorcios) */
+    consorcio(u) { u = u || Auth.user(); return (u && u.consorcioId) || ''; },
+    isPlatform(u) { u = u || Auth.user(); return !!u && !u.consorcioId; },
+    /* administra la plataforma completa (crear consorcios, loterías, resultados, configuración global) */
+    platformCan(perm, u) { u = u || Auth.user(); return Auth.isPlatform(u) && Auth.can(perm, u); },
+    consorcios(u) { u = u || Auth.user(); if (!u) return []; return DB.all('consorcios').filter(c => Auth.isPlatform(u) || c.id === u.consorcioId).sort((a, b) => String(a.name).localeCompare(String(b.name))); },
     /* ids de bancas que el usuario puede ver; null = todas */
-    scope(u) { u = u || Auth.user(); if (!u) return []; return Auth.allBancas(u) ? null : Auth.userBancas(u); },
+    scope(u) {
+      u = u || Auth.user(); if (!u) return [];
+      if (Auth.allBancas(u)) return u.consorcioId ? DB.all('bancas').filter(b => b.consorcioId === u.consorcioId).map(b => b.id) : null;
+      return Auth.userBancas(u);
+    },
+    seesConsorcio(cid, u) { u = u || Auth.user(); return !!u && (Auth.isPlatform(u) || u.consorcioId === cid); },
     sees(bancaId, u) { const sc = Auth.scope(u); return sc === null || sc.includes(bancaId); },
     bancas(u) { const sc = Auth.scope(u); return DB.all('bancas').filter(b => sc === null || sc.includes(b.id)).sort((a, b) => a.code.localeCompare(b.code)); },
     setPosBanca(id) { if (id) sessionStorage.setItem(POS_KEY, id); else sessionStorage.removeItem(POS_KEY); },
@@ -423,6 +439,8 @@
         DB.patch('users', u.id, ch); DB.log('login.fallido', u.username);
         throw new Error('Usuario o contraseña incorrectos');
       }
+      const cz = u.consorcioId && DB.get('consorcios', u.consorcioId);
+      if (cz && cz.status === 'suspendido') throw new Error('El consorcio está suspendido. Contacte a soporte.');
       const ids = Auth.userBancas(u);
       if (Auth.role(u).scope !== 'all' && ids.length && ids.every(id => { const b = DB.get('bancas', id); return b && b.status !== 'activa'; }))
         throw new Error('Sus bancas asignadas están suspendidas.');
@@ -439,6 +457,7 @@
     },
     can(perm, u) {
       u = u || Auth.user(); if (!u) return false; const r = Auth.role(u);
+      if (u.consorcioId && (perm === '*' || PLATFORM_PERMS.includes(perm))) return false; // nivel plataforma
       return r.perms.includes('*') || r.perms.includes(perm);
     },
   };
@@ -447,10 +466,24 @@
   function migrate() {
     if (serverMode) return;
     if (!DB.all('roles').length) DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
+    DEFAULT_ROLES.forEach(r => { if (!DB.get('roles', r.id)) DB.put('roles', Object.assign({}, r), { silent: true }); });
+    const ra = DB.get('roles', 'admin'); if (ra && ra.name === 'Administrador') DB.put('roles', Object.assign({}, ra, { name: DEFAULT_ROLES[0].name, desc: DEFAULT_ROLES[0].desc }), { silent: true });
     DB.all('users').forEach(u => {
       if (!Array.isArray(u.bancaIds)) { const x = Object.assign({}, u, { bancaIds: u.bancaId ? [u.bancaId] : (u.role === 'supervisor' ? DB.all('bancas').map(b => b.id) : []) }); delete x.bancaId; DB.put('users', x, { silent: true }); }
     });
     if (!DB.get('locations', 'central')) DB.put('locations', { id: 'central', name: 'Almacén central' }, { silent: true });
+    // v3: capa de consorcios. Las bancas existentes pasan a un consorcio principal.
+    const loose = DB.all('bancas').filter(b => !b.consorcioId);
+    if (loose.length) {
+      let c = DB.all('consorcios')[0];
+      if (!c) { const cfg = DB.cfg() || {}; c = DB.put('consorcios', { id: 'c_main', code: 'C01', name: cfg.company && cfg.company !== 'AuraSport' && !/BancaRD/.test(cfg.company) ? cfg.company : 'Consorcio principal', rnc: cfg.rnc || '', phone: cfg.phone || '', address: '', status: 'activo', theme: 'aurasport', logo: '', invoice: {}, createdAt: Date.now() }, { silent: true }); }
+      loose.forEach(b => DB.put('bancas', Object.assign({}, b, { consorcioId: c.id }), { silent: true }));
+      DB.all('users').forEach(u => {
+        if (u.consorcioId) return; const ids = Auth.userBancas(u);
+        if (ids.length && !(Auth.role(u).perms || []).includes('*')) { const b = DB.get('bancas', ids[0]); if (b) DB.put('users', Object.assign({}, u, { consorcioId: b.consorcioId }), { silent: true }); }
+      });
+    }
+    const cfg0 = DB.cfg(); if (cfg0 && /BancaRD/.test(cfg0.company || '')) DB.put('config', Object.assign({}, cfg0, { company: 'AuraSport' }), { silent: true });
     if (!DB.all('items').length) seedItems();
     DB.save();
   }
@@ -473,9 +506,21 @@
   /* ---------------- inventario ---------------- */
   const Inv = {
     TYPES: { entrada: 'Entrada (compra)', despacho: 'Despacho a banca', recepcion: 'Recibido en banca', transferencia: 'Transferencia', consumo: 'Consumo / uso', ajuste: 'Ajuste de conteo', devolucion: 'Devolución' },
-    locName(id) { return id === 'central' ? 'Almacén central' : ((DB.get('bancas', id) || {}).name || id); },
+    /* artículos del catálogo general + los propios del consorcio de esa banca/ubicación */
+    itemsFor(loc) {
+      const cid = !loc ? '' : String(loc).startsWith('cen:') ? loc.slice(4) : loc === 'central' ? '' : ((DB.get('bancas', loc) || {}).consorcioId || '');
+      return DB.all('items').filter(i => i.active !== false && (!i.consorcioId || i.consorcioId === cid)).sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
+    },
+    centralOf(cid) { return cid ? 'cen:' + cid : 'central'; },
+    isCentral(loc) { return loc === 'central' || String(loc).startsWith('cen:'); },
+    centralForBanca(bancaId) { const b = DB.get('bancas', bancaId); return Inv.centralOf(b && b.consorcioId); },
+    locName(id) {
+      if (id === 'central') return 'Almacén central';
+      if (String(id).startsWith('cen:')) { const c = DB.get('consorcios', id.slice(4)); return 'Almacén ' + (c ? c.name : ''); }
+      return (DB.get('bancas', id) || {}).name || id;
+    },
     qty(loc, itemId) { const r = DB.get('stock', loc + ':' + itemId); return r ? Number(r.qty) : 0; },
-    min(loc, item) { return loc === 'central' ? Number(item.minCentral || 0) : Number(item.minBanca || 0); },
+    min(loc, item) { return Inv.isCentral(loc) ? Number(item.minCentral || 0) : Number(item.minBanca || 0); },
     add(loc, itemId, delta, silent) {
       const id = loc + ':' + itemId; const cur = DB.get('stock', id) || { id, loc, itemId, qty: 0 };
       DB.put('stock', Object.assign({}, cur, { qty: U.round2(Number(cur.qty) + Number(delta)) }), { silent });
@@ -499,7 +544,7 @@
       DB.put('movements', { id: U.uid('m_'), at: Date.now(), type: 'ajuste', itemId, qty: diff, from: '', to: loc, note: note || 'Conteo físico', by: u ? u.username : '' }, { silent: true });
       DB.save(); emit('stock'); return diff;
     },
-    lowAt(loc) { return DB.all('items').filter(i => i.active !== false && Inv.min(loc, i) > 0 && Inv.qty(loc, i.id) <= Inv.min(loc, i)); },
+    lowAt(loc) { return Inv.itemsFor(loc).filter(i => Inv.min(loc, i) > 0 && Inv.qty(loc, i.id) <= Inv.min(loc, i)); },
     inTransit(bancaId, itemId) {
       return DB.all('requests').filter(r => r.bancaId === bancaId && r.status === 'despachado').reduce((a, r) => a + r.lines.filter(l => l.itemId === itemId).reduce((x, l) => x + Number(l.qtySent || 0), 0), 0);
     },
@@ -524,8 +569,9 @@
     dispatch(r, sent, note) {
       // sent: {itemId: qty}; descuenta del almacén central
       const lines = r.lines.map(l => Object.assign({}, l, { qtySent: Number(sent[l.itemId] ?? l.qty) }));
-      for (const l of lines) if (l.qtySent > 0 && Inv.qty('central', l.itemId) < l.qtySent) throw new Error(`Almacén sin existencia suficiente de ${(DB.get('items', l.itemId) || {}).name}`);
-      lines.forEach(l => { if (l.qtySent > 0) Inv.move({ type: 'despacho', itemId: l.itemId, qty: l.qtySent, from: 'central', note: 'En tránsito a ' + Inv.locName(r.bancaId), ref: r.code, silent: true }); });
+      const cen = Inv.centralForBanca(r.bancaId);
+      for (const l of lines) if (l.qtySent > 0 && Inv.qty(cen, l.itemId) < l.qtySent) throw new Error(`Almacén sin existencia suficiente de ${(DB.get('items', l.itemId) || {}).name}`);
+      lines.forEach(l => { if (l.qtySent > 0) Inv.move({ type: 'despacho', itemId: l.itemId, qty: l.qtySent, from: cen, note: 'En tránsito a ' + Inv.locName(r.bancaId), ref: r.code, silent: true }); });
       DB.save(); return Requests.setStatus(r, 'despachado', note, { lines, dispatchedAt: Date.now() });
     },
     receive(r, note) {
@@ -609,11 +655,13 @@
   }
 
   /* suma vendida de un número hoy (para topes) */
-  function soldOf(lot, kind, nums, date, bancaId) {
+  /* scope: null = todas, 'c:ID' = bancas del consorcio, otro = id de banca */
+  function soldOf(lot, kind, nums, date, scope) {
     const key = [...nums].sort().join('-'); let sum = 0;
+    const inC = scope && String(scope).startsWith('c:') ? new Set(DB.all('bancas').filter(b => b.consorcioId === scope.slice(2)).map(b => b.id)) : null;
     DB.all('tickets').forEach(t => {
       if (t.type !== 'loteria' || t.date !== date || t.status === 'anulado') return;
-      if (bancaId && t.bancaId !== bancaId) return;
+      if (inC ? !inC.has(t.bancaId) : (scope && t.bancaId !== scope)) return;
       t.lines.forEach(l => {
         if (l.kind !== kind) return;
         const lots = kind === 'SP' ? [l.lot, l.lot2].sort().join('+') : l.lot;
@@ -646,9 +694,10 @@
     const rules = DB.all('limits').filter(r => r.active !== false && (r.kind === line.kind || r.kind === '*') &&
       (r.lot === '*' || lotIds.includes(r.lot)) && (r.num === '*' || [...String(r.num).split('-')].sort().join('-') === key || (line.nums.includes(r.num) && line.kind === 'Q')));
     for (const r of rules) {
-      if (r.scope !== 'global' && r.scope !== bancaId) continue;
+      const cScope = 'c:' + ((DB.get('bancas', bancaId) || {}).consorcioId || '');
+      if (r.scope !== 'global' && r.scope !== bancaId && r.scope !== cScope) continue;
       if (r.blocked) return `Número ${line.nums.join('-')} bloqueado${r.note ? ': ' + r.note : ''}`;
-      const sold = soldOf(lotKey, line.kind, line.nums, date, r.scope === 'global' ? null : bancaId);
+      const sold = soldOf(lotKey, line.kind, line.nums, date, r.scope === 'global' ? null : r.scope);
       const avail = Number(r.max) - sold - inCtx;
       if (amt > avail) return `Tope alcanzado para ${line.nums.join('-')} (${lotIds.map(Lot.name).join(' / ')}). Disponible: ${U.money(Math.max(0, avail))}`;
     }
@@ -871,8 +920,14 @@
   };
 
   /* ---------------- impresión del ticket ---------------- */
-  function ticketHTML(t) {
-    const cfg = DB.cfg(); const b = DB.get('bancas', t.bancaId) || {};
+  /* recibo térmico según la plantilla de factura (consorcio > banca) */
+  function ticketHTML(t, opts = {}) {
+    const cfg = DB.cfg() || {}; const b = DB.get('bancas', t.bancaId) || {};
+    const Br = global.BRD && global.BRD.Brand;
+    const br = Br ? Br.for(opts.ctx || { bancaId: t.bancaId }) : { name: cfg.company, rnc: cfg.rnc, address: b.address, phone: '', logo: '', invoice: { header: cfg.ticketHeader, footer: cfg.ticketFooter } };
+    const inv = Object.assign({ showLogo: true, showName: true, showRnc: true, showAddress: true, showPhone: true, showSeller: true, showPin: true, showBarcode: true, showDate: true, showSerial: true, paper: '80', fontSize: 'normal' }, opts.invoice || br.invoice || {});
+    const dev = Br ? Br.Device.get() : {}; const paper = dev.receiptPaper || inv.paper || '80';
+    const on = k => inv[k] !== false;
     let body = '';
     if (t.type === 'loteria') {
       const groups = {};
@@ -896,28 +951,33 @@
         body += `<div class="tk-row"><span>Apuesta</span><span>${U.money(l.amount)}</span></div><div class="tk-row"><span>A ganar</span><span>${U.money(Sports.potential(l))}</span></div>`;
       });
     }
-    return `<div class="ticket">
-      <div class="tk-c tk-h">${U.esc(cfg.company)}</div>
-      <div class="tk-c">${U.esc(b.name || '')} (${U.esc(b.code || '')})</div>
-      ${b.address ? `<div class="tk-c small">${U.esc(b.address)}</div>` : ''}
-      ${cfg.rnc ? `<div class="tk-c small">RNC: ${U.esc(cfg.rnc)}</div>` : ''}
+    const lines = s => String(s || '').split('\n').filter(x => x.trim()).map(x => `<div class="tk-c small">${U.esc(x)}</div>`).join('');
+    return `<div class="ticket tk-${paper} tk-f-${U.esc(inv.fontSize || 'normal')}">
+      ${on('showLogo') && br.logo ? `<div class="tk-c"><img class="tk-logo" src="${U.esc(br.logo)}" alt=""></div>` : ''}
+      ${on('showName') ? `<div class="tk-c tk-h">${U.esc(br.name)}</div>` : ''}
+      <div class="tk-c">${U.esc(b.name || '')}${b.code ? ' (' + U.esc(b.code) + ')' : ''}</div>
+      ${on('showAddress') && br.address ? `<div class="tk-c small">${U.esc(br.address)}</div>` : ''}
+      ${on('showPhone') && br.phone ? `<div class="tk-c small">Tel: ${U.esc(br.phone)}</div>` : ''}
+      ${on('showRnc') && br.rnc ? `<div class="tk-c small">RNC: ${U.esc(br.rnc)}</div>` : ''}
+      ${inv.title ? `<div class="tk-c tk-title">${U.esc(inv.title)}</div>` : ''}
+      ${lines(inv.header)}
       <div class="tk-hr"></div>
       <div class="tk-row"><span>Ticket</span><b>${U.esc(t.code)}</b></div>
-      <div class="tk-row"><span>No.</span><span>${t.serial}</span></div>
-      <div class="tk-row"><span>Fecha</span><span>${U.dt(t.createdAt)}</span></div>
-      <div class="tk-row"><span>Vendedor</span><span>${U.esc(t.userName || '')}</span></div>
+      ${on('showSerial') ? `<div class="tk-row"><span>No.</span><span>${t.serial}</span></div>` : ''}
+      ${on('showDate') ? `<div class="tk-row"><span>Fecha</span><span>${U.dt(t.createdAt)}</span></div>` : ''}
+      ${on('showSeller') ? `<div class="tk-row"><span>Vendedor</span><span>${U.esc(t.userName || '')}</span></div>` : ''}
       <div class="tk-hr"></div>
       ${body}
       <div class="tk-hr"></div>
       <div class="tk-row tk-total"><span>TOTAL</span><span>${U.money(t.total)}</span></div>
       ${t.potential ? `<div class="tk-row"><span>Posible premio</span><span>${U.money(t.potential)}</span></div>` : ''}
-      <div class="tk-row"><span>PIN pago</span><b>${t.pin || '****'}</b></div>
+      ${on('showPin') ? `<div class="tk-row"><span>PIN pago</span><b>${t.pin || '****'}</b></div>` : ''}
       ${t.status === 'anulado' ? '<div class="tk-c tk-h">*** ANULADO ***</div>' : ''}
       <div class="tk-hr"></div>
-      <div class="tk-c">${barcodeSVG(t.code)}</div>
-      <div class="tk-c small">${U.esc(cfg.ticketHeader)}</div>
-      <div class="tk-c small">${U.esc(cfg.ticketFooter)}</div>
-      <div class="tk-c small">Caduca a los ${cfg.expiryDays} días</div>
+      ${on('showBarcode') ? `<div class="tk-c">${barcodeSVG(t.code)}</div>` : ''}
+      ${lines(inv.footer)}
+      ${lines(inv.legal)}
+      <div class="tk-c small">Caduca a los ${cfg.expiryDays || 90} días</div>
     </div>`;
   }
 
@@ -933,12 +993,18 @@
     return `<svg class="barcode" viewBox="0 0 ${x} 40" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">${rects}</svg>`;
   }
 
-  function printTicket(t) {
+  /* impresión: 'termica' (recibos 58/80 mm) o 'carta' (informes en impresora normal) */
+  function printHTML(html, kind = 'termica') {
     let el = document.getElementById('print-area');
     if (!el) { el = document.createElement('div'); el.id = 'print-area'; document.body.appendChild(el); }
-    el.innerHTML = ticketHTML(t);
-    setTimeout(() => { try { window.print(); } catch (e) { UI.toast('No se pudo imprimir en este navegador', 'bad'); } }, 50);
+    let st = document.getElementById('print-page'); if (!st) { st = document.createElement('style'); st.id = 'print-page'; document.head.appendChild(st); }
+    const dev = (global.BRD && global.BRD.Brand) ? global.BRD.Brand.Device.get() : {};
+    if (kind === 'carta') { st.textContent = `@page{size:${dev.reportPaper === 'a4' ? 'A4' : 'letter'};margin:12mm}`; el.className = 'pa-carta'; }
+    else { const w = /tk-58/.test(html) ? 58 : 80; st.textContent = `@page{size:${w}mm auto;margin:2mm}`; el.className = 'pa-termica pa-' + w; }
+    el.innerHTML = html;
+    setTimeout(() => { try { window.print(); } catch (e) { UI.toast('No se pudo imprimir en este navegador', 'bad'); } }, 80);
   }
+  function printTicket(t) { printHTML(ticketHTML(t), 'termica'); }
 
   function ticketText(t) {
     const cfg = DB.cfg(); const b = DB.get('bancas', t.bancaId) || {};
@@ -1123,5 +1189,5 @@
     },
   };
 
-  global.BRD = { U, DB, Auth, api, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, barcodeSVG, DEFAULT_CONFIG };
+  global.BRD = { U, DB, Auth, api, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, printHTML, barcodeSVG, DEFAULT_CONFIG };
 })(window);
