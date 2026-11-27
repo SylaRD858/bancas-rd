@@ -1,0 +1,59 @@
+/* Informe del sistema — se muestra en Panel de Control › Informe */
+window.BRD = window.BRD || {};
+BRD.REPORT_HTML = `
+<h2>Informe del sistema BancaRD v1.0</h2>
+<p class="mut">Sistema web para consorcios de bancas de lotería y apuestas deportivas en República Dominicana. Dos aplicaciones: <b>App de venta</b> (pos.html) y <b>Panel de control</b> (control.html), que comparten los mismos datos.</p>
+
+<h3>1. Lo que pediste y cómo quedó</h3>
+<ul>
+<li><b>Punto de venta deportivo:</b> filtros por deporte, liga, día y equipo; juegos con hora; líneas de Ganador (money line), Run line / Spread / Hándicap y Total (Más/Menos), Empate en fútbol. Jugadas <b>directas</b> o <b>parlay</b> (mín./máx. configurable) con cálculo de premio por momios americanos.</li>
+<li><b>Punto de venta de lotería:</b> selección de una o varias loterías a la vez; Quiniela (2 dígitos), Palé (4), Tripleta (6) y Super Palé (2 loterías). Atajos de montos, teclado rápido (Enter), "Combinar palés" y "Repetir último ticket".</li>
+<li><b>Historial:</b> tickets por turno, del día o de toda la banca; reimprimir, compartir por WhatsApp, anular.</li>
+<li><b>Marcadores y horarios:</b> importación y actualización automática de juegos y marcadores (feed público de ESPN) cada 90 s; edición manual para LIDOM/LNB.</li>
+<li><b>Control de bancas:</b> alta, edición, suspensión, límite diario de venta, código de ticket por banca, ventas en vivo.</li>
+<li><b>Control de staff:</b> usuarios con roles (Administrador, Supervisor, Cajero), banca asignada, comisión, cédula, último acceso, bloqueo por intentos fallidos, cambio de clave.</li>
+</ul>
+
+<h3>2. Funciones que faltaban y se agregaron</h3>
+<ul>
+<li><b>Calificación automática</b> de tickets al ingresar resultados o al terminar un juego (ganador / perdedor / devolución por empate o juego suspendido). Corregir un resultado recalcula los tickets no pagados.</li>
+<li><b>Pago de premios</b> con código de ticket (compatible con lector de código de barras) y <b>PIN de seguridad</b> impreso; evita pagos dobles y tickets caducados.</li>
+<li><b>Cierre automático de ventas</b> X minutos antes de cada sorteo y al inicio de cada juego; horarios distintos por día (ej. Leidsa y Nacional los domingos).</li>
+<li><b>Topes y bloqueos por número</b> (por banca o sumando todas las bancas), máximo por jugada y monto mínimo — control del riesgo de la banca.</li>
+<li><b>Turnos y cuadre de caja:</b> fondo inicial, ventas, premios pagados, gastos, efectivo esperado vs. contado, diferencia, impresión del cuadre; cierre forzado por el administrador.</li>
+<li><b>Anulación controlada:</b> el cajero solo anula sus tickets dentro de N minutos y antes del cierre; supervisor/administrador con motivo registrado.</li>
+<li><b>Ticket térmico 80 mm</b> con código de barras Code 39, PIN, datos de banca y RNC.</li>
+<li><b>Reportes</b> por banca, vendedor, día o producto; comisiones; % de retorno por tipo de jugada; exportación CSV.</li>
+<li><b>Dashboard</b>: ventas vs. ayer, neto, ventas por banca y por lotería, números más jugados, cajeros en turno, alertas de resultados pendientes.</li>
+<li><b>Exposición por juego</b> (cuánto hay apostado en cada partido).</li>
+<li><b>Auditoría</b> de todas las acciones (ventas, anulaciones, pagos, resultados, cambios de configuración, inicios de sesión).</li>
+<li><b>Configuración de premios</b> (Quiniela 1ra/2da/3ra, Palé por combinación, Tripleta 3 y 2 números, Super Palé) y reglas de deportes.</li>
+<li><b>Respaldo y restauración</b> en JSON, generador de ventas de prueba, instalable como app (PWA).</li>
+<li><b>Servidor central opcional</b> (server/server.js, sin dependencias) para que todas las bancas compartan datos en tiempo real.</li>
+</ul>
+
+<h3>3. Valores por defecto (ajústelos en Configuración)</h3>
+<ul>
+<li>Premios por RD$1: Quiniela 60 / 8 / 4 · Palé 1000 (1ra-2da), 1000 (1ra-3ra), 100 (2da-3ra) · Tripleta 20,000 (3) y 100 (2) · Super Palé 2,000.</li>
+<li>Horarios de referencia: La Primera 12:00 y 7:00 PM, La Suerte 12:30 y 6:00 PM, King Lottery, Real 12:55, LoteDom 1:55, Gana Más 2:30, Loteka 7:55, Leidsa 8:55 (dom 3:55), Nacional 9:00 (dom 6:00), Anguila, Florida y New York. Confírmelos con cada lotería.</li>
+<li>Cierre 5 min antes del sorteo, anulación 5 min, caducidad 90 días.</li>
+</ul>
+
+<h3>4. Importante antes de operar con dinero real</h3>
+<ul>
+<li><b>Modo local vs. servidor:</b> publicado como página estática, los datos se guardan en el navegador de cada equipo. Para un consorcio con varias bancas hay que desplegar el servidor incluido (o una base de datos como Supabase/Firebase) para que el panel vea las ventas de todas las bancas.</li>
+<li><b>Seguridad:</b> en esta versión el inicio de sesión y los permisos se validan en el navegador. Antes de producción, la autenticación, la venta y el pago deben validarse en el servidor (tokens por sesión, HTTPS, contraseñas con bcrypt/argon2, permisos por endpoint). El servidor incluido sincroniza datos pero <b>no autentica</b>: no lo exponga a Internet sin agregar esa capa.</li>
+<li><b>Datos deportivos:</b> el feed de ESPN es público y no oficial; no trae LIDOM ni garantiza líneas. Para líneas profesionales use un proveedor de odds con licencia (p. ej. The Odds API, Sportradar, OddsJam).</li>
+<li><b>Legal:</b> las bancas deben tener licencia del Ministerio de Hacienda; los porcentajes de pago de quiniela están regulados (Ley 139-11). Consulte a su abogado para cumplir con impuestos y prevención de lavado.</li>
+</ul>
+
+<h3>5. Siguientes pasos recomendados</h3>
+<ol>
+<li>Backend con autenticación real y base de datos (PostgreSQL) — prioridad alta.</li>
+<li>Integración con proveedor de líneas y resultados de lotería automáticos.</li>
+<li>Impresión directa a impresoras térmicas Bluetooth/USB (ESC/POS) desde Android.</li>
+<li>Banca móvil / ventas en línea con billetera de clientes (requiere licencia online).</li>
+<li>Recargas y pagos de servicios (fuente de ingreso adicional común en bancas).</li>
+<li>Notificaciones (WhatsApp/SMS) de premios y alertas de tope.</li>
+</ol>
+`;
