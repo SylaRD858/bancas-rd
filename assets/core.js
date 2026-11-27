@@ -200,6 +200,7 @@
     VERSION, COLLS,
     get mode() { return serverMode ? 'servidor' : 'local'; },
     get serverMode() { return serverMode; },
+    get online() { return !serverMode || online; },
     get isServer() { return isServer; },
     onPut: null,            // gancho usado por el servidor para persistir
     load() {
@@ -318,11 +319,14 @@
       if (first) { const keep = state.config && state.config.main; state = {}; COLLS.forEach(c => state[c] = {}); if (keep) state.config.main = keep; }
       (j.records || []).forEach(({ c, rec }) => { if (!state[c]) state[c] = {}; state[c][rec.id] = rec; n++; });
       lastSync = j.now || Date.now();
+      setOnline(true);
       if (n || first) emit('*');
       flush();
       return true;
-    } catch (e) { return false; }
+    } catch (e) { setOnline(false); return false; }
   }
+  let online = true;
+  function setOnline(v) { if (online !== v) { online = v; emit('net'); } }
   function push(c, rec) { pending.push({ c, rec }); clearTimeout(push.t); push.t = setTimeout(flush, 250); }
   let flushing = false;
   async function flush() {

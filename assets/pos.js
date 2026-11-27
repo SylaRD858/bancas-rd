@@ -47,7 +47,7 @@
         <div class="row"><div class="brand" style="padding:0"><i>B</i>${U.esc(b.name || '')}</div>
           <span class="pill">${U.esc(b.code || '')}</span><span class="pill">👤 ${U.esc(u.name)}</span>
           ${sh ? `<span class="badge b-ok">Turno abierto ${U.time(sh.openedAt)}</span>` : '<span class="badge b-bad">Sin turno</span>'}
-          <span class="pill" title="Modo de datos">${DB.mode === 'servidor' ? '🟢 En línea' : '💾 Local'}</span>
+          <span class="pill" id="netpill" title="Conexión con el servidor">${DB.mode === 'servidor' ? (DB.online ? '🟢 En línea' : '🔴 Sin conexión') : '💾 Local'}</span>
         </div>
         <div class="row"><span class="clock" id="clock"></span>
           ${Auth.bancas(u).filter(x => x.status === 'activa').length > 1 && !sh ? '<button class="btn sm" id="swb">Cambiar banca</button>' : ''}${Auth.hasControl(u) ? '<a class="btn sm" href="control.html">Panel de control</a>' : ''}
@@ -476,6 +476,7 @@
   }
 
   BRD.rerender = () => render();
+  DB.on(c => { if (c === 'net') { const p = document.getElementById('netpill'); if (p) p.textContent = DB.online ? '🟢 En línea' : '🔴 Sin conexión'; if (!DB.online) UI.toast('Sin conexión con el servidor: no se pueden vender tickets hasta que vuelva.', 'bad', 6000); } });
   DB.on(c => { if (c === 'auth') { UI.toast('Su sesión venció. Entre de nuevo.', 'warn'); start(); } });
   /* refrescos */
   DB.on(c => {

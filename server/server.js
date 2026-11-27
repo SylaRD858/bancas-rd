@@ -536,6 +536,13 @@ async function handleApi(req, res, url) {
     });
     return send(res, 200, { now, records });
   }
+  if (p === 'backup') {
+    if (!Auth.can('*', u)) return send(res, 403, { error: 'Solo el administrador puede descargar el respaldo' });
+    const st = DB.state(); const data = {};
+    for (const c of DB.COLLS) data[c] = Object.fromEntries(Object.entries(st[c] || {}).map(([k, v]) => [k, c === 'users' ? sanitize(u, 'users', v) : v]));
+    asUser(u, null, () => DB.log('respaldo.descargado', 'servidor'));
+    return send(res, 200, { app: 'BancaRD', version: DB.VERSION, exportedAt: new Date().toISOString(), data });
+  }
   if (p === 'ticket') {
     const code = str(url.searchParams.get('code'), 30).toUpperCase();
     return asUser(u, banca, me => {

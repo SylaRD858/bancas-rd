@@ -701,7 +701,11 @@
     UI.$('#imp').onchange = async e => { const file = e.target.files[0]; if (!file) return; if (!await UI.confirm('Esto reemplaza TODOS los datos actuales. ¿Continuar?')) return; const r = new FileReader(); r.onload = () => { try { DB.importJSON(r.result); UI.toast('Respaldo restaurado'); render(); } catch (err) { UI.toast(err.message, 'bad'); } }; r.readAsText(file); };
     UI.$('#rst').onclick = async () => { if (await UI.prompt('Escriba BORRAR para eliminar todos los datos de este navegador') !== 'BORRAR') return; DB.reset(); Auth.logout(); location.reload(); };
     UI.$('#demo').onclick = demoSales;
-    if (DB.serverMode) { ['#demo', '#rst'].forEach(x => { const el = UI.$(x); if (el) el.remove(); }); const im = UI.$('#imp'); if (im) im.parentElement.remove(); }
+    if (DB.serverMode) {
+      ['#demo', '#rst'].forEach(x => { const el = UI.$(x); if (el) el.remove(); }); const im = UI.$('#imp'); if (im) im.parentElement.remove();
+      UI.$('#exp').textContent = 'Descargar respaldo completo del servidor';
+      UI.$('#exp').onclick = async () => { try { const j = await BRD.api.call('backup'); U.download(`bancard_servidor_${U.today()}.json`, JSON.stringify(j), 'application/json'); UI.toast('Respaldo descargado'); } catch (e) { UI.toast(e.message, 'bad'); } };
+    }
   }
 
   /* ventas simuladas para probar reportes */

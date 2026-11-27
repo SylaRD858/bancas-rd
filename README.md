@@ -30,6 +30,13 @@ PORT=8080 DATA_DIR=/datos ADMIN_PASSWORD='ClaveSegura' node server/server.js
 
 ### Publicar
 - **Render**: conecte este repo (usa `render.yaml`). Plan gratis + Supabase, o plan Starter + disco.
+- **Oracle Cloud Always Free (gratis)**: cree una VM `VM.Standard.E2.1.Micro` (Ubuntu 24.04 Minimal), abra los puertos 80 y 443 en la lista de seguridad de su red y use como *cloud-init*:
+  ```bash
+  #!/bin/bash
+  curl -fsSL https://raw.githubusercontent.com/SylaRD858/bancas-rd/main/server/install-oracle.sh -o /root/i.sh
+  ADMIN_PASSWORD=SuClaveInicial bash /root/i.sh
+  ```
+  Instala Node 22, el servicio, HTTPS automático (Caddy + `IP.sslip.io`) y la actualización automática desde GitHub cada 5 minutos.
 - **Docker**: `docker build -t bancard . && docker run -p 8080:8080 -v bancard:/data bancard`
 - **VPS / PC propia**: `node server/server.js` detrás de HTTPS (Caddy, Nginx o Cloudflare Tunnel).
 
