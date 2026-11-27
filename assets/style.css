@@ -144,3 +144,15 @@ hr{border:none;border-top:1px solid var(--line);margin:14px 0}
   .ticket{border-radius:0;padding:0}
   @page{size:80mm auto;margin:3mm}
 }
+.nav a .nb{margin-left:auto;background:var(--bad);color:#fff;border-radius:99px;font-size:11px;font-weight:800;padding:1px 7px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chipc{display:flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:13px;color:var(--tx);cursor:pointer}
+.chipc input{width:auto}
+.perm-g{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+.perm-g h4{margin:0 0 6px;font-size:13px;color:var(--ac)}
+.low{color:var(--warn);font-weight:700}
+.zero{color:var(--bad);font-weight:700}
+.thread{border-left:3px solid var(--line);padding-left:10px;margin:8px 0}
+.thread .c{margin:8px 0}
+.photo{max-width:100%;max-height:260px;border-radius:8px;border:1px solid var(--line)}
+.tl{font-size:12px;color:var(--mut);margin:2px 0}

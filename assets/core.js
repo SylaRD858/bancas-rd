@@ -9,8 +9,8 @@
   const VERSION = '1.0.0';
   const LS_KEY = 'bancard_db_v1';
   const SS_KEY = 'bancard_session_v1';
-  const COLLS = ['config', 'bancas', 'users', 'lotteries', 'results', 'leagues', 'games',
-    'tickets', 'shifts', 'limits', 'audit', 'expenses'];
+  const COLLS = ['config', 'bancas', 'users', 'roles', 'lotteries', 'results', 'leagues', 'games',
+    'tickets', 'shifts', 'limits', 'audit', 'expenses', 'items', 'stock', 'movements', 'locations', 'requests', 'issues', 'syserrors'];
 
   /* ---------------- utilidades ---------------- */
   const U = {
@@ -152,10 +152,10 @@
     DB.put('config', Object.assign({}, DEFAULT_CONFIG));
     DB.put('bancas', { id: 'b_001', code: 'B001', name: 'Banca Principal', address: 'Av. Principal #1', zone: 'Santo Domingo', phone: '', owner: '', status: 'activa', commission: 10, dailyLimit: 0, lotteries: 'todas', sports: true, createdAt: now });
     DB.put('bancas', { id: 'b_002', code: 'B002', name: 'Banca Los Mina', address: 'Calle 5, Los Mina', zone: 'Santo Domingo Este', phone: '', owner: '', status: 'activa', commission: 10, dailyLimit: 0, lotteries: 'todas', sports: true, createdAt: now });
-    DB.put('users', { id: 'u_admin', username: 'admin', name: 'Administrador', role: 'admin', bancaId: '', active: true, pass: await U.sha('bancard:admin123'), mustChange: true, commission: 0, createdAt: now });
-    DB.put('users', { id: 'u_sup', username: 'supervisor', name: 'Supervisor Zona', role: 'supervisor', bancaId: '', active: true, pass: await U.sha('bancard:super123'), mustChange: true, commission: 0, createdAt: now });
-    DB.put('users', { id: 'u_caj1', username: 'cajero1', name: 'Cajero Principal', role: 'cajero', bancaId: 'b_001', active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
-    DB.put('users', { id: 'u_caj2', username: 'cajero2', name: 'Cajero Los Mina', role: 'cajero', bancaId: 'b_002', active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
+    DB.put('users', { id: 'u_admin', username: 'admin', name: 'Administrador', role: 'admin', bancaIds: [], active: true, pass: await U.sha('bancard:admin123'), mustChange: true, commission: 0, createdAt: now });
+    DB.put('users', { id: 'u_sup', username: 'supervisor', name: 'Supervisor Zona', role: 'supervisor', bancaIds: ['b_001', 'b_002'], active: true, pass: await U.sha('bancard:super123'), mustChange: true, commission: 0, createdAt: now });
+    DB.put('users', { id: 'u_caj1', username: 'cajero1', name: 'Cajero Principal', role: 'cajero', bancaIds: ['b_001'], active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
+    DB.put('users', { id: 'u_caj2', username: 'cajero2', name: 'Cajero Los Mina', role: 'cajero', bancaIds: ['b_002'], active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
     LOTTERIES.forEach((l, i) => DB.put('lotteries', { id: l[0], name: l[1], time: l[2], dayTimes: l[3] || {}, days: [0, 1, 2, 3, 4, 5, 6], closeMinutes: 5, active: true, order: i, games: { Q: true, P: true, T: true, SP: true } }));
     LEAGUES.forEach((l, i) => DB.put('leagues', { id: l[0], name: l[1], sport: l[2], espn: l[3], active: true, order: i }));
     seedGames();
@@ -242,7 +242,8 @@
     async init() {
       DB.load();
       await detectServer();
-      if (DB.isEmpty()) await seed();
+      if (DB.isEmpty()) { DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true })); await seed(); }
+      migrate();
       if (!DB.cfg()) DB.put('config', Object.assign({}, DEFAULT_CONFIG));
       // completar llaves nuevas de configuración
       const cfg = DB.cfg(); let changed = false;
@@ -289,17 +290,57 @@
     } catch (e) { pending = batch.concat(pending); setTimeout(flush, 5000); }
   }
 
-  /* ---------------- autenticación y permisos ---------------- */
-  const ROLES = {
-    admin: { name: 'Administrador', control: true, pos: true, perms: '*' },
-    supervisor: { name: 'Supervisor', control: true, pos: true, perms: ['dashboard', 'bancas.view', 'staff.view', 'results', 'games', 'tickets', 'reports', 'shifts', 'limits', 'audit.view'] },
-    cajero: { name: 'Cajero / Vendedor', control: false, pos: true, perms: ['pos'] },
-  };
+  /* ---------------- autenticación, roles y permisos ---------------- */
+  /* Catálogo de permisos (agrupados para la pantalla de roles) */
+  const PERMS = [
+    ['Venta', [['pos', 'Usar la app de venta (vender, pagar, cuadre)'], ['pos.multi', 'Vender en cualquiera de sus bancas asignadas']]],
+    ['Panel', [['dashboard', 'Ver dashboard de sus bancas'], ['tickets.view', 'Ver tickets'], ['tickets.void', 'Anular tickets pendientes (cualquier vendedor)'], ['tickets.void_late', 'Anular después del cierre del sorteo'], ['tickets.pay', 'Pagar sin PIN / marcar pagado desde el panel'], ['reports', 'Ver reportes de ventas'], ['shifts.view', 'Ver cuadres y turnos'], ['shifts.close', 'Forzar cierre de turnos'], ['audit.view', 'Ver auditoría']]],
+    ['Operación', [['results', 'Ingresar / corregir resultados de lotería'], ['games', 'Gestionar juegos, líneas y marcadores'], ['limits', 'Topes y bloqueos de números'], ['lotteries', 'Loterías y horarios']]],
+    ['Puntos de venta y staff', [['bancas.view', 'Ver bancas'], ['bancas.edit', 'Crear / editar / suspender bancas'], ['staff.view', 'Ver staff'], ['staff.edit', 'Crear / editar staff y claves'], ['roles', 'Administrar roles y permisos']]],
+    ['Inventario', [['inventory.view', 'Ver existencias'], ['inventory.use', 'Registrar consumo en su banca'], ['inventory.edit', 'Catálogo, entradas y ajustes de inventario'], ['requests.create', 'Pedir material'], ['requests.approve', 'Aprobar, rechazar y despachar pedidos']]],
+    ['Soporte', [['issues.create', 'Reportar errores / problemas'], ['issues.manage', 'Gestionar reportes (asignar, resolver)'], ['syserrors', 'Ver errores técnicos del sistema']]],
+    ['Sistema', [['config', 'Configuración general, premios y respaldo']]],
+  ];
+  const ALL_PERMS = PERMS.flatMap(g => g[1].map(p => p[0]));
+  const DEFAULT_ROLES = [
+    { id: 'admin', name: 'Administrador', scope: 'all', perms: ['*'], system: true, order: 0, desc: 'Dueño del consorcio: acceso total.' },
+    { id: 'supervisor', name: 'Supervisor', scope: 'assigned', order: 1, desc: 'Supervisa sus bancas asignadas, aprueba pedidos y atiende reportes.',
+      perms: ['pos', 'pos.multi', 'dashboard', 'tickets.view', 'tickets.void', 'reports', 'shifts.view', 'shifts.close', 'audit.view', 'limits', 'bancas.view', 'staff.view', 'inventory.view', 'inventory.use', 'requests.create', 'requests.approve', 'issues.create', 'issues.manage'] },
+    { id: 'operador', name: 'Operador central', scope: 'all', order: 2, desc: 'Oficina central: resultados, líneas y topes.',
+      perms: ['dashboard', 'tickets.view', 'results', 'games', 'limits', 'issues.create', 'issues.manage', 'syserrors'] },
+    { id: 'encargado', name: 'Encargado de banca', scope: 'assigned', order: 3, desc: 'Responsable de una o varias bancas: ve sus ventas, cuadres e inventario.',
+      perms: ['pos', 'pos.multi', 'dashboard', 'tickets.view', 'reports', 'shifts.view', 'inventory.view', 'inventory.use', 'requests.create', 'issues.create'] },
+    { id: 'cajero', name: 'Cajero / Vendedor', scope: 'assigned', order: 4, desc: 'Vende en su banca, ve su existencia, pide material y reporta errores.',
+      perms: ['pos', 'inventory.view', 'inventory.use', 'requests.create', 'issues.create'] },
+  ];
+  const CONTROL_PERMS = ALL_PERMS.filter(p => !['pos', 'pos.multi', 'inventory.view', 'inventory.use', 'requests.create', 'issues.create', 'tickets.void_late', 'tickets.pay'].includes(p));
+  const POS_KEY = 'bancard_pos_banca';
+
   const Auth = {
-    ROLES,
+    PERMS, ALL_PERMS, DEFAULT_ROLES,
+    role(u) { return DB.get('roles', u && u.role) || { id: u && u.role, name: u && u.role, perms: [], scope: 'assigned' }; },
+    roleName(u) { return Auth.role(u).name; },
+    /* usuario en sesión (copia), con bancaIds normalizado y bancaId = banca activa en la venta */
     user() {
-      try { const s = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null'); if (!s) return null; const u = DB.get('users', s.id); return u && u.active ? Object.assign({}, u) : null; } catch (e) { return null; }
+      try {
+        const s = JSON.parse(sessionStorage.getItem(SS_KEY) || 'null'); if (!s) return null;
+        const r = DB.get('users', s.id); if (!r || !r.active) return null;
+        const u = Object.assign({}, r); u.bancaIds = Auth.userBancas(r);
+        const cur = sessionStorage.getItem(POS_KEY);
+        const allowed = Auth.allBancas(u) ? DB.all('bancas').map(b => b.id) : u.bancaIds;
+        u.bancaId = cur && allowed.includes(cur) ? cur : (u.bancaIds.length === 1 ? u.bancaIds[0] : '');
+        return u;
+      } catch (e) { return null; }
     },
+    userBancas(u) { return Array.isArray(u.bancaIds) ? u.bancaIds.slice() : (u.bancaId ? [u.bancaId] : []); },
+    allBancas(u) { u = u || Auth.user(); return !!u && Auth.role(u).scope === 'all'; },
+    /* ids de bancas que el usuario puede ver; null = todas */
+    scope(u) { u = u || Auth.user(); if (!u) return []; return Auth.allBancas(u) ? null : Auth.userBancas(u); },
+    sees(bancaId, u) { const sc = Auth.scope(u); return sc === null || sc.includes(bancaId); },
+    bancas(u) { const sc = Auth.scope(u); return DB.all('bancas').filter(b => sc === null || sc.includes(b.id)).sort((a, b) => a.code.localeCompare(b.code)); },
+    setPosBanca(id) { if (id) sessionStorage.setItem(POS_KEY, id); else sessionStorage.removeItem(POS_KEY); },
+    hasControl(u) { const r = Auth.role(u); return r.perms.includes('*') || r.perms.some(p => CONTROL_PERMS.includes(p)); },
+    hasPos(u) { return Auth.can('pos', u); },
     async login(username, password) {
       username = String(username || '').trim().toLowerCase();
       const u = DB.all('users').find(x => x.username.toLowerCase() === username);
@@ -313,19 +354,157 @@
         DB.patch('users', u.id, ch); DB.log('login.fallido', u.username);
         throw new Error('Usuario o contraseña incorrectos');
       }
-      if (u.bancaId) { const b = DB.get('bancas', u.bancaId); if (b && b.status !== 'activa') throw new Error('La banca ' + b.name + ' está ' + b.status + '.'); }
+      const ids = Auth.userBancas(u);
+      if (Auth.role(u).scope !== 'all' && ids.length && ids.every(id => { const b = DB.get('bancas', id); return b && b.status !== 'activa'; }))
+        throw new Error('Sus bancas asignadas están suspendidas.');
       DB.patch('users', u.id, { fails: 0, lockedUntil: 0, lastLogin: Date.now() });
       sessionStorage.setItem(SS_KEY, JSON.stringify({ id: u.id, at: Date.now() }));
+      sessionStorage.removeItem(POS_KEY);
       DB.log('login', u.username);
       return DB.get('users', u.id);
     },
-    logout() { const u = Auth.user(); if (u) DB.log('logout', u.username); sessionStorage.removeItem(SS_KEY); },
+    logout() { const u = Auth.user(); if (u) DB.log('logout', u.username); sessionStorage.removeItem(SS_KEY); sessionStorage.removeItem(POS_KEY); },
     async setPassword(userId, pw) { DB.patch('users', userId, { pass: await U.sha('bancard:' + pw), mustChange: false }); },
     can(perm, u) {
-      u = u || Auth.user(); if (!u) return false; const r = ROLES[u.role]; if (!r) return false;
-      if (r.perms === '*') return true; return r.perms.includes(perm) || r.perms.includes(perm.split('.')[0]);
+      u = u || Auth.user(); if (!u) return false; const r = Auth.role(u);
+      return r.perms.includes('*') || r.perms.includes(perm);
     },
   };
+
+  /* migración de datos de la versión 1.0 */
+  function migrate() {
+    if (!DB.all('roles').length) DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
+    DB.all('users').forEach(u => {
+      if (!Array.isArray(u.bancaIds)) { const x = Object.assign({}, u, { bancaIds: u.bancaId ? [u.bancaId] : (u.role === 'supervisor' ? DB.all('bancas').map(b => b.id) : []) }); delete x.bancaId; DB.put('users', x, { silent: true }); }
+    });
+    if (!DB.get('locations', 'central')) DB.put('locations', { id: 'central', name: 'Almacén central' }, { silent: true });
+    if (!DB.all('items').length) seedItems();
+    DB.save();
+  }
+  function seedItems() {
+    const items = [
+      ['papel80', 'Rollo papel térmico 80mm', 'Papelería', 'rollo', 6, 60],
+      ['papel58', 'Rollo papel térmico 58mm', 'Papelería', 'rollo', 0, 0],
+      ['talon', 'Talonario de recibos', 'Papelería', 'unidad', 1, 10],
+      ['boligrafo', 'Bolígrafos', 'Oficina', 'unidad', 3, 30],
+      ['funda', 'Fundas para premios', 'Oficina', 'paquete', 1, 10],
+      ['pizarra', 'Marcadores de pizarra', 'Oficina', 'unidad', 2, 20],
+      ['limpieza', 'Desinfectante / limpieza', 'Limpieza', 'unidad', 1, 10],
+      ['bateria', 'Baterías AA (UPS / control)', 'Equipos', 'paquete', 1, 10],
+      ['cable', 'Cable USB impresora', 'Equipos', 'unidad', 0, 3],
+      ['cartel', 'Cartel de resultados', 'Publicidad', 'unidad', 1, 10],
+    ];
+    items.forEach(([id, name, category, unit, minBanca, minCentral]) => DB.put('items', { id, name, category, unit, minBanca, minCentral, active: true }, { silent: true }));
+    // existencia inicial en almacén
+    items.forEach(([id, , , , , minCentral]) => { if (minCentral) Inv.move({ type: 'entrada', itemId: id, qty: minCentral * 2, to: 'central', note: 'Existencia inicial', silent: true }); });
+    DB.all('bancas').forEach(b => items.forEach(([id, , , , minBanca]) => { if (minBanca) Inv.move({ type: 'entrada', itemId: id, qty: minBanca + 2, to: b.id, note: 'Existencia inicial', silent: true }); }));
+  }
+
+  /* ---------------- inventario ---------------- */
+  const Inv = {
+    TYPES: { entrada: 'Entrada (compra)', despacho: 'Despacho a banca', recepcion: 'Recibido en banca', transferencia: 'Transferencia', consumo: 'Consumo / uso', ajuste: 'Ajuste de conteo', devolucion: 'Devolución' },
+    locName(id) { return id === 'central' ? 'Almacén central' : ((DB.get('bancas', id) || {}).name || id); },
+    qty(loc, itemId) { const r = DB.get('stock', loc + ':' + itemId); return r ? Number(r.qty) : 0; },
+    min(loc, item) { return loc === 'central' ? Number(item.minCentral || 0) : Number(item.minBanca || 0); },
+    add(loc, itemId, delta, silent) {
+      const id = loc + ':' + itemId; const cur = DB.get('stock', id) || { id, loc, itemId, qty: 0 };
+      DB.put('stock', Object.assign({}, cur, { qty: U.round2(Number(cur.qty) + Number(delta)) }), { silent });
+    },
+    /* mueve inventario y deja el movimiento registrado */
+    move({ type, itemId, qty, from, to, note, ref, silent }) {
+      qty = Number(qty); if (!(qty > 0) && type !== 'ajuste') throw new Error('Cantidad inválida');
+      const it = DB.get('items', itemId); if (!it) throw new Error('Artículo no existe');
+      if (from && type !== 'ajuste' && Inv.qty(from, itemId) < qty) throw new Error(`No hay suficiente ${it.name} en ${Inv.locName(from)} (hay ${Inv.qty(from, itemId)})`);
+      if (from) Inv.add(from, itemId, -qty, true);
+      if (to) Inv.add(to, itemId, qty, true);
+      const u = Auth.user();
+      DB.put('movements', { id: U.uid('m_'), at: Date.now(), type, itemId, qty, from: from || '', to: to || '', note: note || '', ref: ref || '', by: u ? u.username : 'sistema' }, { silent: true });
+      if (!silent) { DB.save(); emit('stock'); }
+    },
+    /* ajuste a conteo físico */
+    setCount(loc, itemId, counted, note) {
+      const diff = U.round2(Number(counted) - Inv.qty(loc, itemId)); if (!diff) return 0;
+      Inv.add(loc, itemId, diff, true);
+      const u = Auth.user();
+      DB.put('movements', { id: U.uid('m_'), at: Date.now(), type: 'ajuste', itemId, qty: diff, from: '', to: loc, note: note || 'Conteo físico', by: u ? u.username : '' }, { silent: true });
+      DB.save(); emit('stock'); return diff;
+    },
+    lowAt(loc) { return DB.all('items').filter(i => i.active !== false && Inv.min(loc, i) > 0 && Inv.qty(loc, i.id) <= Inv.min(loc, i)); },
+    inTransit(bancaId, itemId) {
+      return DB.all('requests').filter(r => r.bancaId === bancaId && r.status === 'despachado').reduce((a, r) => a + r.lines.filter(l => l.itemId === itemId).reduce((x, l) => x + Number(l.qtySent || 0), 0), 0);
+    },
+  };
+
+  /* ---------------- pedidos de material ---------------- */
+  const REQ_STATUS = { pendiente: ['Pendiente', 'b-warn'], aprobado: ['Aprobado', 'b-info'], despachado: ['Despachado', 'b-info'], recibido: ['Recibido', 'b-ok'], rechazado: ['Rechazado', 'b-bad'], cancelado: ['Cancelado', 'b-mute'] };
+  const Requests = {
+    STATUS: REQ_STATUS,
+    badge(s) { const x = REQ_STATUS[s] || [s, '']; return `<span class="badge ${x[1]}">${x[0]}</span>`; },
+    nextCode() { const n = DB.all('requests').length + 1; return 'PED-' + String(n).padStart(4, '0') + '-' + U.code(3); },
+    create({ bancaId, lines, note, priority }) {
+      const u = Auth.user(); if (!lines.length) throw new Error('Agregue al menos un artículo');
+      const r = { id: U.uid('r_'), code: Requests.nextCode(), bancaId, by: u.username, byName: u.name, at: Date.now(), lines: lines.map(l => ({ itemId: l.itemId, qty: Number(l.qty), qtySent: 0 })), note: note || '', priority: priority || 'normal', status: 'pendiente', history: [{ at: Date.now(), by: u.username, status: 'pendiente', note: note || '' }] };
+      DB.put('requests', r); DB.log('pedido.creado', `${r.code} ${Inv.locName(bancaId)}`); return r;
+    },
+    setStatus(r, status, note, extra) {
+      const u = Auth.user();
+      const upd = Object.assign({}, r, extra || {}, { status, history: (r.history || []).concat([{ at: Date.now(), by: u.username, status, note: note || '' }]) });
+      DB.put('requests', upd); DB.log('pedido.' + status, `${r.code} ${note || ''}`); return upd;
+    },
+    dispatch(r, sent, note) {
+      // sent: {itemId: qty}; descuenta del almacén central
+      const lines = r.lines.map(l => Object.assign({}, l, { qtySent: Number(sent[l.itemId] ?? l.qty) }));
+      for (const l of lines) if (l.qtySent > 0 && Inv.qty('central', l.itemId) < l.qtySent) throw new Error(`Almacén sin existencia suficiente de ${(DB.get('items', l.itemId) || {}).name}`);
+      lines.forEach(l => { if (l.qtySent > 0) Inv.move({ type: 'despacho', itemId: l.itemId, qty: l.qtySent, from: 'central', note: 'En tránsito a ' + Inv.locName(r.bancaId), ref: r.code, silent: true }); });
+      DB.save(); return Requests.setStatus(r, 'despachado', note, { lines, dispatchedAt: Date.now() });
+    },
+    receive(r, note) {
+      r.lines.forEach(l => { if (l.qtySent > 0) Inv.move({ type: 'recepcion', itemId: l.itemId, qty: l.qtySent, to: r.bancaId, ref: r.code, silent: true }); });
+      DB.save(); return Requests.setStatus(r, 'recibido', note, { receivedAt: Date.now() });
+    },
+  };
+
+  /* ---------------- reportes de errores / soporte ---------------- */
+  const ISSUE_CATS = { impresora: '🖨️ Impresora / papel', sistema: '💻 Sistema / app', internet: '🌐 Internet / conexión', ticket: '🧾 Ticket o premio', caja: '💰 Caja / cuadre', lineas: '🏟️ Líneas o resultados', local: '🏪 Local / equipo', otro: '❓ Otro' };
+  const ISSUE_PRI = { baja: ['Baja', 'b-mute'], media: ['Media', 'b-info'], alta: ['Alta', 'b-warn'], urgente: ['Urgente', 'b-bad'] };
+  const ISSUE_ST = { abierto: ['Abierto', 'b-warn'], en_proceso: ['En proceso', 'b-info'], resuelto: ['Resuelto', 'b-ok'], cerrado: ['Cerrado', 'b-mute'] };
+  const Issues = {
+    CATS: ISSUE_CATS, PRI: ISSUE_PRI, ST: ISSUE_ST,
+    badge(map, k) { const x = map[k] || [k, '']; return `<span class="badge ${x[1]}">${x[0]}</span>`; },
+    create(d) {
+      const u = Auth.user(); const n = DB.all('issues').length + 1;
+      const r = Object.assign({ id: U.uid('i_'), code: 'ERR-' + String(n).padStart(4, '0'), by: u.username, byName: u.name, at: Date.now(), status: 'abierto', comments: [], assignedTo: '' }, d);
+      DB.put('issues', r); DB.log('error.reportado', `${r.code} ${r.title}`); return r;
+    },
+    comment(r, text, status) {
+      const u = Auth.user(); const c = { at: Date.now(), by: u.username, byName: u.name, text: text || '' };
+      if (status && status !== r.status) c.status = status;
+      const upd = Object.assign({}, r, { comments: (r.comments || []).concat(text || status ? [c] : []) });
+      if (status) { upd.status = status; if (status === 'resuelto') upd.resolvedAt = Date.now(); }
+      DB.put('issues', upd); DB.log('error.actualizado', `${r.code} ${status || ''}`); return upd;
+    },
+    /* foto: reduce a máx. 1000px JPEG para no llenar el almacenamiento */
+    async compress(file) {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+      const k = Math.min(1, 1000 / Math.max(img.width, img.height)); const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.7);
+    },
+  };
+
+  /* errores técnicos automáticos (se ven en Soporte › Errores del sistema) */
+  function captureErrors(app) {
+    const rec = (msg, src) => {
+      try {
+        msg = String(msg || '').slice(0, 300); if (!msg || /ResizeObserver|Script error/.test(msg)) return;
+        const key = (app + '|' + msg).replace(/[^\w]/g, '').slice(0, 80);
+        const cur = DB.get('syserrors', key); const u = Auth.user();
+        DB.put('syserrors', { id: key, app, msg, src: String(src || '').slice(0, 300), count: (cur ? cur.count : 0) + 1, first: cur ? cur.first : Date.now(), last: Date.now(), user: u ? u.username : '', ua: navigator.userAgent.slice(0, 120), resolved: false });
+      } catch (e) { /* nunca romper la app por registrar */ }
+    };
+    window.addEventListener('error', e => rec(e.message, (e.filename || '') + ':' + (e.lineno || '')));
+    window.addEventListener('unhandledrejection', e => rec(e.reason && (e.reason.stack || e.reason.message) || e.reason, 'promise'));
+  }
 
   /* ---------------- loterías: horarios y cierres ---------------- */
   const Lot = {
@@ -572,9 +751,10 @@
           const lot = DB.get('lotteries', id); if (t.date !== U.today() || (lot && !Lot.status(lot).open)) { if (u.role !== 'admin') return 'El sorteo ya cerró'; }
         }
       } else {
-        for (const l of t.lines) for (const leg of l.legs) { const g = DB.get('games', leg.gameId); if (g && !Sports.isOpen(g) && u.role !== 'admin') return 'Un juego ya comenzó'; }
+        for (const l of t.lines) for (const leg of l.legs) { const g = DB.get('games', leg.gameId); if (g && !Sports.isOpen(g) && !Auth.can('tickets.void_late', u)) return 'Un juego ya comenzó'; }
       }
-      if (u.role === 'cajero') {
+      if (!Auth.sees(t.bancaId, u)) return 'Ticket de otra banca';
+      if (!Auth.can('tickets.void', u)) {
         if (t.userId !== u.id) return 'Solo puede anular sus propios tickets';
         if (Date.now() - t.createdAt > cfg.voidMinutes * 60000) return `Tiempo de anulación vencido (${cfg.voidMinutes} min). Solicite a un supervisor.`;
       }
@@ -593,8 +773,8 @@
       if (t.status === 'caducado') throw new Error('Ticket caducado (más de ' + cfg.expiryDays + ' días)');
       if (t.status === 'perdedor') throw new Error('Ticket no premiado');
       if (t.status === 'pendiente') throw new Error('Ticket aún pendiente de resultados');
-      if (cfg.requirePinToPay && u.role === 'cajero' && String(pin) !== String(t.pin)) throw new Error('PIN de seguridad incorrecto');
-      if (cfg.payOnlyIssuingBanca && u.role === 'cajero' && t.bancaId !== u.bancaId) throw new Error('Este ticket solo se paga en la banca emisora');
+      if (cfg.requirePinToPay && !Auth.can('tickets.pay', u) && String(pin) !== String(t.pin)) throw new Error('PIN de seguridad incorrecto');
+      if (cfg.payOnlyIssuingBanca && !Auth.can('tickets.pay', u) && t.bancaId !== u.bancaId) throw new Error('Este ticket solo se paga en la banca emisora');
       const upd = Object.assign({}, t, { status: 'pagado', paidAt: Date.now(), paidBy: u.username, paidBanca: u.bancaId, paidShift: shift ? shift.id : '' });
       DB.put('tickets', upd); DB.log('ticket.pagado', `${t.code} ${U.money(t.prize)}`);
       return upd;
@@ -799,7 +979,8 @@
   /* ---------------- reportes ---------------- */
   const Reports = {
     range(from, to, filter = {}) {
-      const tks = DB.all('tickets').filter(t => t.date >= from && t.date <= to &&
+      const sc = filter.all ? null : Auth.scope();
+      const tks = DB.all('tickets').filter(t => t.date >= from && t.date <= to && (sc === null || sc.includes(t.bancaId)) &&
         (!filter.bancaId || t.bancaId === filter.bancaId) && (!filter.userId || t.userId === filter.userId) && (!filter.type || t.type === filter.type));
       const valid = tks.filter(t => t.status !== 'anulado');
       const ventas = U.round2(valid.reduce((a, t) => a + t.total, 0));
@@ -862,5 +1043,5 @@
     },
   };
 
-  global.BRD = { U, DB, Auth, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, barcodeSVG, DEFAULT_CONFIG };
+  global.BRD = { U, DB, Auth, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, barcodeSVG, DEFAULT_CONFIG };
 })(window);

@@ -2,7 +2,8 @@
    BancaRD — Punto de Venta (cajero / vendedor)
    ========================================================= */
 (async function () {
-  const { U, DB, Auth, Lot, Sports, Tickets, Shifts, Scores, UI, KIND_NAMES } = BRD;
+  const { U, DB, Auth, Lot, Sports, Tickets, Shifts, Scores, UI, KIND_NAMES, Inv, Requests, Issues } = BRD;
+  BRD.captureErrors('venta');
   const root = document.getElementById('app');
   await DB.init();
 
@@ -14,23 +15,25 @@
 
   function start() {
     const u = Auth.user();
-    if (!u) return BRD.loginScreen(root, { title: 'Punto de Venta', subtitle: 'Lotería y deportes', allow: x => !!x.bancaId || x.role !== 'cajero', onLogin: start });
+    if (!u) return BRD.loginScreen(root, { title: 'Punto de Venta', subtitle: 'Lotería y deportes', allow: x => Auth.hasPos(x) && (Auth.allBancas(x) || Auth.userBancas(x).length > 0), onLogin: start });
     if (!u.bancaId) return pickBanca(u);
     render();
   }
 
-  /* admin/supervisor sin banca: elegir desde cuál vender */
+  /* usuario con varias bancas: elegir desde cuál trabajar */
   function pickBanca(u) {
-    const bancas = DB.all('bancas').filter(b => b.status === 'activa');
-    root.innerHTML = `<div class="login-wrap"><div class="card login"><h3>Seleccione la banca</h3>
-      ${bancas.map(b => `<button class="btn" style="width:100%;margin:4px 0" data-b="${b.id}">${U.esc(b.code)} — ${U.esc(b.name)}</button>`).join('')}
-      <hr><a class="btn ghost" href="control.html">Ir al panel de control</a> <button class="btn ghost" id="lo">Salir</button></div></div>`;
-    root.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { u.bancaId = x.dataset.b; sessionStorage.setItem('bancard_pos_banca', x.dataset.b); render(); });
+    const open = Shifts.current(u);
+    if (open && Auth.sees(open.bancaId, u)) { Auth.setPosBanca(open.bancaId); return render(); }
+    const bancas = Auth.bancas(u).filter(b => b.status === 'activa');
+    if (bancas.length === 1) { Auth.setPosBanca(bancas[0].id); return render(); }
+    root.innerHTML = `<div class="login-wrap"><div class="card login"><h3>¿En qué banca va a trabajar?</h3>
+      ${bancas.map(b => `<button class="btn" style="width:100%;margin:4px 0;justify-content:flex-start" data-b="${b.id}"><b>${U.esc(b.code)}</b>&nbsp;${U.esc(b.name)} <small style="margin-left:auto">${U.esc(b.zone || '')}</small></button>`).join('') || '<p class="mut">No tiene bancas activas asignadas.</p>'}
+      <hr>${Auth.hasControl(u) ? '<a class="btn ghost" href="control.html">Ir al panel de control</a> ' : ''}<button class="btn ghost" id="lo">Salir</button></div></div>`;
+    root.querySelectorAll('[data-b]').forEach(x => x.onclick = () => { Auth.setPosBanca(x.dataset.b); DB.log('venta.banca', (DB.get('bancas', x.dataset.b) || {}).code); render(); });
     root.querySelector('#lo').onclick = () => { Auth.logout(); start(); };
-    const saved = sessionStorage.getItem('bancard_pos_banca'); if (saved && DB.get('bancas', saved)) { u.bancaId = saved; render(); }
   }
 
-  function me() { const u = Auth.user(); if (u && !u.bancaId) u.bancaId = sessionStorage.getItem('bancard_pos_banca') || ''; return u; }
+  function me() { return Auth.user(); }
   function shift() { return Shifts.current(me()); }
 
   /* ---------------- render principal ---------------- */
@@ -38,6 +41,7 @@
     const u = me(); if (!u) return start();
     const b = DB.get('bancas', u.bancaId) || {};
     const sh = shift();
+    if (sh && sh.bancaId !== u.bancaId && Auth.sees(sh.bancaId, u)) { Auth.setPosBanca(sh.bancaId); return render(); }
     root.innerHTML = `<div class="main" style="max-width:1400px;margin:auto">
       <div class="top">
         <div class="row"><div class="brand" style="padding:0"><i>B</i>${U.esc(b.name || '')}</div>
@@ -46,21 +50,22 @@
           <span class="pill" title="Modo de datos">${DB.mode === 'servidor' ? '🟢 En línea' : '💾 Local'}</span>
         </div>
         <div class="row"><span class="clock" id="clock"></span>
-          ${Auth.can('dashboard') ? '<a class="btn sm" href="control.html">Panel de control</a>' : ''}
+          ${Auth.bancas(u).filter(x => x.status === 'activa').length > 1 && !sh ? '<button class="btn sm" id="swb">Cambiar banca</button>' : ''}${Auth.hasControl(u) ? '<a class="btn sm" href="control.html">Panel de control</a>' : ''}
           <button class="btn sm" id="chpw">Clave</button><button class="btn sm" id="logout">Salir</button></div>
       </div>
       <div class="tabs">
-        ${[['loteria', '🎱 Lotería'], ['deporte', '🏟️ Deportes'], ['pagar', '💵 Pagar ticket'], ['tickets', '🧾 Mis tickets'], ['resultados', '📊 Resultados'], ['caja', '💰 Caja / Cuadre']]
+        ${[['loteria', '🎱 Lotería'], ['deporte', '🏟️ Deportes'], ['pagar', '💵 Pagar ticket'], ['tickets', '🧾 Mis tickets'], ['resultados', '📊 Resultados'], ['caja', '💰 Caja / Cuadre']].concat(Auth.can('inventory.view') || Auth.can('requests.create') ? [['inventario', '📦 Inventario' + (Inv.lowAt(u.bancaId).length || DB.all('requests').some(r => r.bancaId === u.bancaId && r.status === 'despachado') ? ' •' : '')]] : []).concat(Auth.can('issues.create') ? [['soporte', '🛠️ Reportar error']] : [])
         .map(([k, n]) => `<button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}
       </div>
       <div id="view"></div></div>`;
     root.querySelectorAll('[data-tab]').forEach(x => x.onclick = () => { S.tab = x.dataset.tab; render(); });
-    UI.$('#logout').onclick = async () => { if (S.lotLines.length || S.legs.length) { if (!await UI.confirm('Hay jugadas sin vender. ¿Salir?')) return; } Auth.logout(); sessionStorage.removeItem('bancard_pos_banca'); start(); };
+    UI.$('#logout').onclick = async () => { if (S.lotLines.length || S.legs.length) { if (!await UI.confirm('Hay jugadas sin vender. ¿Salir?')) return; } Auth.logout(); start(); };
+    const swb = UI.$('#swb'); if (swb) swb.onclick = () => { Auth.setPosBanca(''); S.lotLines = []; S.legs = []; pickBanca(me()); };
     UI.$('#chpw').onclick = () => BRD.changePassword(u);
     tick();
     const v = UI.$('#view');
     if (!sh && (S.tab === 'loteria' || S.tab === 'deporte' || S.tab === 'pagar')) return viewNoShift(v);
-    ({ loteria: viewLottery, deporte: viewSports, pagar: viewPay, tickets: viewTickets, resultados: viewResults, caja: viewCash })[S.tab](v);
+    (({ loteria: viewLottery, deporte: viewSports, pagar: viewPay, tickets: viewTickets, resultados: viewResults, caja: viewCash, inventario: viewInventory, soporte: viewSupport })[S.tab] || viewLottery)(v);
   }
 
   function tick() { const c = UI.$('#clock'); if (c) c.textContent = new Intl.DateTimeFormat('es-DO', { timeZone: U.tz(), weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).format(new Date()); }
@@ -431,12 +436,44 @@
     setTimeout(() => window.print(), 50);
   }
 
+  /* ---------------- INVENTARIO (banca) ---------------- */
+  function viewInventory(v) {
+    const u = me(); const b = u.bancaId;
+    const items = DB.all('items').filter(i => i.active !== false).sort((a, c) => (a.category || '').localeCompare(c.category || '') || a.name.localeCompare(c.name));
+    const reqs = DB.all('requests').filter(r => r.bancaId === b).sort((a, c) => c.at - a.at).slice(0, 20);
+    const arriving = reqs.filter(r => r.status === 'despachado');
+    v.innerHTML = `${arriving.length ? `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><b>🚚 Material en camino:</b> ${arriving.map(r => `<button class="btn sm pri" data-o="${r.id}">${U.esc(r.code)} — confirmar recibido</button>`).join(' ')}</div>` : ''}
+      <div class="grid g2"><div class="card"><div class="row between"><h3>Existencia en ${U.esc(Inv.locName(b))}</h3>${Auth.can('requests.create') ? '<button class="btn pri sm" id="np">Pedir material</button>' : ''}</div>
+        <table><thead><tr><th>Artículo</th><th class="num">Tengo</th><th class="num">Mín.</th><th class="num">En camino</th><th></th></tr></thead><tbody>
+        ${items.map(i => { const q = Inv.qty(b, i.id), mn = Inv.min(b, i), tr = Inv.inTransit(b, i.id); return `<tr><td>${U.esc(i.name)}<br><small>${U.esc(i.category || '')}</small></td><td class="num ${q <= 0 && mn ? 'zero' : q <= mn && mn ? 'low' : ''}">${q} ${U.esc(i.unit)}</td><td class="num">${mn}</td><td class="num">${tr || ''}</td><td>${Auth.can('inventory.use') && q > 0 ? `<button class="btn sm" data-use="${i.id}">Usé</button>` : ''}</td></tr>`; }).join('')}</tbody></table>
+        <p class="small">Pulse <b>Usé</b> cuando gaste material (por ejemplo, un rollo de papel). Así el supervisor sabe cuándo reponer.</p></div>
+      <div class="card"><h3>Mis pedidos</h3><table><tbody>${reqs.map(r => `<tr><td><b>${U.esc(r.code)}</b><br><small>${U.dt(r.at)} · ${U.esc(r.byName)}</small></td><td class="small">${r.lines.map(l => `${U.esc((DB.get('items', l.itemId) || {}).name || '')}: ${l.qty}`).join('<br>')}</td><td>${Requests.badge(r.status)}</td><td><button class="btn sm" data-o="${r.id}">Ver</button></td></tr>`).join('') || '<tr><td class="mut">Aún no ha pedido material</td></tr>'}</tbody></table></div></div>`;
+    const np = UI.$('#np'); if (np) np.onclick = () => BRD.requestForm(b);
+    v.querySelectorAll('[data-o]').forEach(x => x.onclick = () => BRD.requestModal(DB.get('requests', x.dataset.o)));
+    v.querySelectorAll('[data-use]').forEach(x => x.onclick = async () => {
+      const it = DB.get('items', x.dataset.use); const q = await UI.prompt(`¿Cuántos ${it.unit}(s) de ${it.name} usó?`, '1'); if (q === null) return;
+      try { Inv.move({ type: 'consumo', itemId: it.id, qty: Number(q), from: b, note: 'Registrado en venta' }); UI.toast('Consumo registrado'); render(); } catch (e) { UI.toast(e.message, 'bad'); }
+    });
+  }
+
+  /* ---------------- SOPORTE (reportar errores) ---------------- */
+  function viewSupport(v) {
+    const u = me();
+    const list = DB.all('issues').filter(i => i.by === u.username || i.bancaId === u.bancaId).sort((a, c) => c.at - a.at).slice(0, 30);
+    v.innerHTML = `<div class="grid g2"><div class="card"><h3>¿Algo no funciona?</h3><p class="mut">Reporte cualquier problema: impresora, sistema, internet, un ticket, la caja… Su supervisor y la oficina lo verán y le responderán aquí mismo.</p>
+      <div class="row">${Object.entries(Issues.CATS).map(([k, n]) => `<button class="btn" data-cat="${k}">${n}</button>`).join('')}</div></div>
+      <div class="card"><h3>Mis reportes</h3><table><tbody>${list.map(i => `<tr><td><b>${U.esc(i.code)}</b> ${U.esc(i.title)}<br><small>${U.dt(i.at)} · ${(i.comments || []).length} respuesta(s)</small></td><td>${Issues.badge(Issues.ST, i.status)}</td><td><button class="btn sm" data-o="${i.id}">Ver</button></td></tr>`).join('') || '<tr><td class="mut">Sin reportes</td></tr>'}</tbody></table></div></div>`;
+    v.querySelectorAll('[data-cat]').forEach(x => x.onclick = () => { BRD.issueForm(u.bancaId); const sel = document.querySelector('#isf [name=category]'); if (sel) sel.value = x.dataset.cat; });
+    v.querySelectorAll('[data-o]').forEach(x => x.onclick = () => BRD.issueModal(DB.get('issues', x.dataset.o)));
+  }
+
+  BRD.rerender = () => render();
   /* refrescos */
   DB.on(c => {
     if (!Auth.user()) return;
     const a = document.activeElement; if (a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA')) return;
     if (document.getElementById('modal')) return;
-    if (['tickets', 'results', 'games', 'lotteries', 'config', '*'].includes(c) && ['resultados', 'tickets', 'deporte', 'caja'].includes(S.tab)) render();
+    if (['tickets', 'results', 'games', 'lotteries', 'config', '*', 'requests', 'issues', 'stock'].includes(c) && ['resultados', 'tickets', 'deporte', 'caja', 'inventario', 'soporte'].includes(S.tab)) render();
   });
   setInterval(() => { // estados de cierre de loterías
     if (S.tab === 'loteria' && Auth.user() && !document.getElementById('modal')) {

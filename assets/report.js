@@ -1,7 +1,7 @@
 /* Informe del sistema — se muestra en Panel de Control › Informe */
 window.BRD = window.BRD || {};
 BRD.REPORT_HTML = `
-<h2>Informe del sistema BancaRD v1.0</h2>
+<h2>Informe del sistema BancaRD v1.1</h2>
 <p class="mut">Sistema web para consorcios de bancas de lotería y apuestas deportivas en República Dominicana. Dos aplicaciones: <b>App de venta</b> (pos.html) y <b>Panel de control</b> (control.html), que comparten los mismos datos.</p>
 
 <h3>1. Lo que pediste y cómo quedó</h3>
@@ -30,6 +30,18 @@ BRD.REPORT_HTML = `
 <li><b>Configuración de premios</b> (Quiniela 1ra/2da/3ra, Palé por combinación, Tripleta 3 y 2 números, Super Palé) y reglas de deportes.</li>
 <li><b>Respaldo y restauración</b> en JSON, generador de ventas de prueba, instalable como app (PWA).</li>
 <li><b>Servidor central opcional</b> (server/server.js, sin dependencias) para que todas las bancas compartan datos en tiempo real.</li>
+</ul>
+
+<h3>2b. Novedades v1.1 — organización del panel</h3>
+<ul>
+<li><b>Menú por áreas:</b> General, Ventas, Operación, Puntos de venta, Inventario, Soporte y Sistema, con contadores de pendientes (pedidos, reportes de errores, artículos bajo mínimo).</li>
+<li><b>Bancas / puntos de venta:</b> tipo (banca, punto de venta, agencia, kiosco…), ficha completa con ventas, staff, existencias, pedidos y reportes de cada banca.</li>
+<li><b>Staff con varias bancas:</b> cada miembro puede tener una o varias bancas asignadas. Al entrar a la venta elige en cuál trabaja; si tiene un turno abierto, entra directo a esa banca.</li>
+<li><b>Roles y permisos configurables:</b> Administrador, Supervisor, Operador central, Encargado de banca y Cajero vienen listos; se pueden crear, editar o duplicar roles marcando permisos (27 permisos en 7 grupos). Cada rol tiene un <b>alcance</b>: "todas las bancas" o "solo bancas asignadas". Un supervisor de zona solo ve las ventas, tickets, cuadres, staff, inventario, pedidos y reportes de sus bancas. Un usuario solo puede crear staff con roles que no superen sus propios permisos.</li>
+<li><b>Inventario:</b> catálogo de artículos (papel térmico, talonarios, bolígrafos, etc.) con mínimo por banca y por almacén; existencias por ubicación, vista general en matriz, entradas de compra, transferencias, conteo físico con ajuste automático y registro de todos los movimientos.</li>
+<li><b>Pedidos de material:</b> el personal de la banca ve lo que tiene en existencia y pide lo que falta (el formulario sugiere cantidades para lo que está bajo mínimo). Flujo: Pendiente → el supervisor aprueba o rechaza → despacha desde el almacén → la banca confirma "recibido" y entra a su existencia. Todo queda con historial.</li>
+<li><b>Reporte de errores:</b> desde la venta o el panel, con tipo (impresora, sistema, internet, ticket, caja, líneas, local), prioridad, ticket relacionado y foto. El supervisor u oficina lo asigna, responde y cambia el estado (abierto, en proceso, resuelto, cerrado); el cajero ve las respuestas y puede reabrirlo.</li>
+<li><b>Errores del sistema:</b> los fallos técnicos de la app se registran solos (agrupados, con cantidad y usuario) para el equipo de desarrollo.</li>
 </ul>
 
 <h3>3. Valores por defecto (ajústelos en Configuración)</h3>
