@@ -465,9 +465,19 @@ function body(req) {
 }
 
 let lastScores = 0;
+/* índice de cambios por tiempo: la sincronización no recorre toda la base cada vez */
+const changeLog = []; // { t, c, id } en orden de tiempo
+function noteChange(c, rec) { changeLog.push({ t: rec.updatedAt || Date.now(), c, id: rec.id }); if (changeLog.length > 400000) changeLog.splice(0, 100000); }
+function changesSince(since) {
+  if (!changeLog.length || since < changeLog[0].t) return null; // muy viejo: recorrido completo
+  let lo = 0, hi = changeLog.length; while (lo < hi) { const m = (lo + hi) >> 1; if (changeLog[m].t <= since) lo = m + 1; else hi = m; }
+  const seen = new Set(); const out = [];
+  for (let i = lo; i < changeLog.length; i++) { const k = changeLog[i].c + '/' + changeLog[i].id; if (!seen.has(k)) { seen.add(k); out.push(changeLog[i]); } }
+  return out;
+}
 async function handleApi(req, res, url) {
   const p = url.pathname.slice(5); const ip = ipOf(req);
-  if (p === 'ping') return send(res, 200, { bancard: true, secure: true, version: DB.VERSION, now: Date.now() });
+  if (p === 'ping') return send(res, 200, { bancard: true, secure: true, version: DB.VERSION, now: Date.now(), uptime: Math.round(process.uptime()), mem: Math.round(process.memoryUsage().rss / 1048576) });
   if (p === 'public') { const c = DB.cfg() || {}; return send(res, 200, { config: { company: c.company, currency: c.currency, timezone: c.timezone } }); }
   if (p === 'login' && req.method === 'POST') {
     if (!rateOk('login:' + ip, 10, 5 * 60000)) return send(res, 429, { error: 'Demasiados intentos. Espere unos minutos.' });
@@ -512,11 +522,16 @@ async function handleApi(req, res, url) {
   if (p === 'changes') {
     const since = Number(url.searchParams.get('since')) || 0; const now = Date.now(); const records = [];
     asUser(u, banca, me => {
-      const st = DB.state();
-      for (const c of DB.COLLS) for (const rec of Object.values(st[c] || {})) {
-        if ((rec.updatedAt || 0) <= since) continue;
-        if (since === 0 && rec._deleted) continue;
-        if (visible(me, c, rec)) records.push({ c, rec: sanitize(me, c, rec) });
+      const idx = since > 0 ? changesSince(since) : null;
+      if (idx) {
+        for (const x of idx) { const rec = DB.raw(x.c, x.id); if (rec && (rec.updatedAt || 0) > since && visible(me, x.c, rec)) records.push({ c: x.c, rec: sanitize(me, x.c, rec) }); }
+      } else {
+        const st = DB.state();
+        for (const c of DB.COLLS) for (const rec of Object.values(st[c] || {})) {
+          if ((rec.updatedAt || 0) <= since) continue;
+          if (since === 0 && rec._deleted) continue;
+          if (visible(me, c, rec)) records.push({ c, rec: sanitize(me, c, rec) });
+        }
       }
     });
     return send(res, 200, { now, records });
@@ -598,7 +613,7 @@ const server = http.createServer(async (req, res) => {
   const sys = loaded._sys || {}; delete loaded._sys;
   sessions = (sys.sessions && sys.sessions.data) || {};
   DB.serverBoot(loaded);
-  DB.onPut = (c, rec) => store.write(c, rec);
+  DB.onPut = (c, rec) => { store.write(c, rec); noteChange(c, rec); };
   await DB.init();
   const admin = DB.get('users', 'u_admin');
   if (admin && !admin.pass) {
