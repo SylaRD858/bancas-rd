@@ -743,18 +743,17 @@
           scoreHome: home.score != null && status !== 'programado' ? Number(home.score) : null,
           period: st.shortDetail || st.detail || '', source: 'espn', extId: 'espn:' + ev.id,
         };
+        const odds = parseEspnOdds((comp.odds && comp.odds[0]) || null);
         if (!g) {
-          const o = (comp.odds && comp.odds[0]) || {};
-          const odds = { mlAway: num(o.awayTeamOdds && o.awayTeamOdds.moneyLine), mlHome: num(o.homeTeamOdds && o.homeTeamOdds.moneyLine), mlDraw: num(o.drawOdds && o.drawOdds.moneyLine), spread: null, spAway: -110, spHome: -110, total: num(o.overUnder), over: -110, under: -110 };
-          if (o.spread != null) { odds.spread = -num(o.spread); } // espn: spread del local
-          if (o.homeTeamOdds && o.homeTeamOdds.spreadOdds) odds.spHome = num(o.homeTeamOdds.spreadOdds);
-          if (o.awayTeamOdds && o.awayTeamOdds.spreadOdds) odds.spAway = num(o.awayTeamOdds.spreadOdds);
-          if (o.overOdds) odds.over = num(o.overOdds); if (o.underOdds) odds.under = num(o.underOdds);
-          g = Object.assign({ id: U.uid('g_'), odds, oddsLocked: false }, base);
+          g = Object.assign({ id: U.uid('g_'), odds: odds || {}, oddsLocked: false }, base);
           DB.put('games', g, { silent: true }); imported++;
         } else {
-          const changed = g.status !== base.status || g.scoreAway !== base.scoreAway || g.scoreHome !== base.scoreHome || g.period !== base.period || g.start !== base.start;
-          if (changed && !g.manualScore) { DB.put('games', Object.assign({}, g, base), { silent: true }); updated++; }
+          const upd = Object.assign({}, g);
+          let changed = false;
+          if (!g.manualScore && (g.status !== base.status || g.scoreAway !== base.scoreAway || g.scoreHome !== base.scoreHome || g.period !== base.period || g.start !== base.start)) { Object.assign(upd, base); changed = true; }
+          // líneas: se actualizan mientras el juego no ha empezado y no estén bloqueadas
+          if (odds && !g.oddsLocked && base.status === 'programado' && JSON.stringify(odds) !== JSON.stringify(g.odds)) { upd.odds = odds; changed = true; }
+          if (changed) { DB.put('games', upd, { silent: true }); updated++; }
         }
       });
       return { imported, updated };
@@ -777,6 +776,24 @@
       setTimeout(run, 3000); setInterval(run, Math.max(30, cfg.scoresIntervalSec || 90) * 1000);
     },
   };
+  /* convierte las cuotas del marcador de ESPN (formato DraftKings) a nuestro formato */
+  function parseEspnOdds(o) {
+    if (!o) return null;
+    const pick = x => x && (x.close || x.current || x.open) || null;
+    const odd = x => { const p = pick(x); return p ? num(p.odds) : null; };
+    const line = x => { const p = pick(x); return p && p.line != null ? num(String(p.line).replace(/^[ou]/i, '')) : null; };
+    const ml = o.moneyline || {}, ps = o.pointSpread || {}, tt = o.total || {};
+    const r = {
+      mlAway: odd(ml.away) ?? num(o.awayTeamOdds && o.awayTeamOdds.moneyLine),
+      mlHome: odd(ml.home) ?? num(o.homeTeamOdds && o.homeTeamOdds.moneyLine),
+      mlDraw: odd(ml.draw) ?? num(o.drawOdds && o.drawOdds.moneyLine),
+      spread: line(ps.home) ?? num(o.spread), // línea del local (ej. -3.5)
+      spHome: odd(ps.home) ?? -110, spAway: odd(ps.away) ?? -110,
+      total: line(tt.over) ?? num(o.overUnder), over: odd(tt.over) ?? -110, under: odd(tt.under) ?? -110,
+    };
+    if (r.mlAway == null && r.mlHome == null && r.spread == null && r.total == null) return null;
+    return r;
+  }
   function num(v) { if (v == null || v === '') return null; const n = Number(String(v).replace('+', '')); return isNaN(n) ? null : n; }
 
   /* ---------------- reportes ---------------- */

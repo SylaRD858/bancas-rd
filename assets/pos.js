@@ -230,7 +230,7 @@
   function gameCard(g) {
     const o = g.odds || {}; const open = Sports.isOpen(g); const soccer = Sports.sportOf(g) === 'futbol';
     const sel = (m, s) => S.legs.some(l => l.gameId === g.id && l.market === m && l.side === s) ? 'sel' : '';
-    const btn = (m, s, main, sub) => main == null || main === '' || (m !== 'tot' && m !== 'rl' && !main) ? `<div class="odd" disabled>—</div>` :
+    const btn = (m, s, main, sub) => main == null || main === '' || main === '—' ? `<div class="odd" disabled>—</div>` :
       `<button class="odd ${sel(m, s)}" data-odd data-g="${g.id}" data-m="${m}" data-s="${s}" ${open ? '' : 'disabled'}>${main}${sub ? `<small>${sub}</small>` : ''}</button>`;
     const st = g.status === 'en_vivo' ? '<span class="badge b-live">En vivo</span>' : g.status === 'final' ? '<span class="badge b-mute">Final</span>' : g.status === 'suspendido' ? '<span class="badge b-bad">Suspendido</span>' : open ? '<span class="badge b-ok">Abierto</span>' : '<span class="badge b-warn">Cerrado</span>';
     const sc = (g.scoreAway != null && g.status !== 'programado') ? `<span class="score">${g.scoreAway} - ${g.scoreHome}</span> <small>${U.esc(g.period || '')}</small>` : '';

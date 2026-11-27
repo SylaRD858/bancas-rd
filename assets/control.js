@@ -214,7 +214,7 @@
     const f = deportes.f || (deportes.f = { league: '', date: U.today(), status: '' });
     const leagues = DB.all('leagues').sort((a, b) => a.order - b.order);
     const games = DB.all('games').filter(g => (!f.league || g.league === f.league) && (!f.date || g.date === f.date) && (!f.status || g.status === f.status)).sort((a, b) => a.start - b.start);
-    act.innerHTML = `<button class="btn sm pri" id="ng">+ Nuevo juego</button><button class="btn sm" id="imp">⇣ Importar / actualizar (ESPN)</button><button class="btn sm" id="lgs">Ligas</button>`;
+    act.innerHTML = `<button class="btn sm pri" id="ng">+ Nuevo juego</button><button class="btn sm" id="imp">⇣ Importar / actualizar (ESPN)</button><button class="btn sm" id="lgs">Ligas</button>${DB.all('games').some(g => g.demo) ? '<button class="btn sm ghost" id="deld">Quitar juegos de ejemplo</button>' : ''}`;
     v.innerHTML = `<div class="card"><form id="gf" class="row"><div><label>Liga</label><select name="league"><option value="">Todas</option>${leagues.map(l => `<option value="${l.id}" ${f.league === l.id ? 'selected' : ''}>${U.esc(l.name)}</option>`).join('')}</select></div>
       <div><label>Fecha</label><input type="date" name="date" value="${f.date}"></div>
       <div><label>Estado</label><select name="status"><option value="">Todos</option>${['programado', 'en_vivo', 'final', 'suspendido', 'cancelado'].map(s => `<option ${f.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
@@ -228,6 +228,7 @@
     UI.$('#gf').onsubmit = e => { e.preventDefault(); deportes.f = UI.formData(e.target); render(); };
     UI.$('#ng').onclick = () => gameForm(null);
     UI.$('#lgs').onclick = leaguesModal;
+    const dd = UI.$('#deld'); if (dd) dd.onclick = async () => { if (!await UI.confirm('¿Eliminar los juegos de ejemplo sin jugadas vendidas?')) return; let n = 0; DB.all('games').filter(g => g.demo && !exposure(g.id).count).forEach(g => { DB.remove('games', g.id); n++; }); DB.log('juegos.demo_eliminados', n + ''); UI.toast(n + ' juegos eliminados'); render(); };
     UI.$('#imp').onclick = async () => { UI.toast('Importando…', 'ok', 1500); try { const r = await Scores.refreshAll({ ahead: true, all: true }); UI.toast(`${r.imported} juegos nuevos, ${r.updated} actualizados, ${r.graded} tickets calificados${r.errors ? ' · ' + r.errors + ' errores (' + Scores.lastError + ')' : ''}`, r.errors ? 'warn' : 'ok', 6000); } catch (e) { UI.toast(e.message, 'bad'); } render(); };
     v.querySelectorAll('[data-e]').forEach(b => b.onclick = () => gameForm(DB.get('games', b.dataset.e)));
     v.querySelectorAll('[data-s]').forEach(b => b.onclick = () => scoreForm(DB.get('games', b.dataset.s)));
