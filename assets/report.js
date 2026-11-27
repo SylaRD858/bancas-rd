@@ -1,7 +1,7 @@
 /* Informe del sistema — se muestra en Panel de Control › Informe */
 window.BRD = window.BRD || {};
 BRD.REPORT_HTML = `
-<h2>Informe del sistema BancaRD v1.1</h2>
+<h2>Informe del sistema BancaRD v2.0</h2>
 <p class="mut">Sistema web para consorcios de bancas de lotería y apuestas deportivas en República Dominicana. Dos aplicaciones: <b>App de venta</b> (pos.html) y <b>Panel de control</b> (control.html), que comparten los mismos datos.</p>
 
 <h3>1. Lo que pediste y cómo quedó</h3>
@@ -44,6 +44,16 @@ BRD.REPORT_HTML = `
 <li><b>Errores del sistema:</b> los fallos técnicos de la app se registran solos (agrupados, con cantidad y usuario) para el equipo de desarrollo.</li>
 </ul>
 
+<h3>2c. Novedades v2.0 — servidor central seguro</h3>
+<ul>
+<li><b>Base limpia:</b> sin datos de ejemplo; solo el usuario <b>admin</b>, que debe crear su contraseña al entrar. El panel muestra una guía de primeros pasos.</li>
+<li><b>Inicio de sesión real:</b> contraseñas cifradas con scrypt en el servidor, sesión con token de 12 horas, bloqueo tras 5 intentos fallidos y límite de intentos por IP. Al cambiarle la clave a alguien se cierran sus sesiones abiertas.</li>
+<li><b>El servidor manda:</b> cada venta, pago, anulación, resultado, cambio de staff o de inventario se valida en el servidor con el rol y las bancas del usuario. Un ticket solo se entrega si el servidor lo aprueba (horario, topes, montos y línea vigente). Si la línea deportiva cambió, la venta se rechaza.</li>
+<li><b>Calificación y marcadores en el servidor:</b> nadie puede marcarse un ticket como ganador; los pagos verifican el PIN y que no se paguen dos veces.</li>
+<li><b>Privacidad:</b> cada usuario solo descarga los datos de sus bancas; las contraseñas nunca salen del servidor; el PIN del ticket solo lo ve quien lo vendió.</li>
+<li><b>Datos guardados</b> en archivo con respaldo automático cada hora, o en Supabase (Postgres).</li>
+</ul>
+
 <h3>3. Valores por defecto (ajústelos en Configuración)</h3>
 <ul>
 <li>Premios por RD$1: Quiniela 60 / 8 / 4 · Palé 1000 (1ra-2da), 1000 (1ra-3ra), 100 (2da-3ra) · Tripleta 20,000 (3) y 100 (2) · Super Palé 2,000.</li>
@@ -53,8 +63,7 @@ BRD.REPORT_HTML = `
 
 <h3>4. Importante antes de operar con dinero real</h3>
 <ul>
-<li><b>Modo local vs. servidor:</b> publicado como página estática, los datos se guardan en el navegador de cada equipo. Para un consorcio con varias bancas hay que desplegar el servidor incluido (o una base de datos como Supabase/Firebase) para que el panel vea las ventas de todas las bancas.</li>
-<li><b>Seguridad:</b> en esta versión el inicio de sesión y los permisos se validan en el navegador. Antes de producción, la autenticación, la venta y el pago deben validarse en el servidor (tokens por sesión, HTTPS, contraseñas con bcrypt/argon2, permisos por endpoint). El servidor incluido sincroniza datos pero <b>no autentica</b>: no lo exponga a Internet sin agregar esa capa.</li>
+<li><b>Use siempre el modo servidor con HTTPS</b> para operar con dinero. La versión de GitHub Pages (modo local) es solo para demostración: ahí los permisos se validan en el navegador.</li>
 <li><b>Datos deportivos:</b> el feed de ESPN es público y no oficial; no trae LIDOM ni garantiza líneas. Para líneas profesionales use un proveedor de odds con licencia (p. ej. The Odds API, Sportradar, OddsJam).</li>
 <li><b>Legal:</b> las bancas deben tener licencia del Ministerio de Hacienda; los porcentajes de pago de quiniela están regulados (Ley 139-11). Consulte a su abogado para cumplir con impuestos y prevención de lavado.</li>
 </ul>

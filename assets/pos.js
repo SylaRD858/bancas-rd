@@ -76,7 +76,7 @@
       <p class="mut">Para vender o pagar tickets debe abrir su turno indicando el fondo (efectivo inicial).</p>
       <form id="of"><div class="field"><label>Fondo inicial</label><input name="f" type="number" min="0" step="0.01" value="0"></div>
       <button class="btn pri">Abrir turno</button></form></div>`;
-    UI.$('#of').onsubmit = e => { e.preventDefault(); try { Shifts.open(me(), UI.formData(e.target).f); UI.toast('Turno abierto'); render(); } catch (err) { UI.toast(err.message, 'bad'); } };
+    UI.$('#of').onsubmit = async e => { e.preventDefault(); try { const s = Shifts.open(me(), UI.formData(e.target).f); await DB.confirm('shifts', s.id); UI.toast('Turno abierto'); render(); } catch (err) { UI.toast(err.message, 'bad'); render(); } };
   }
 
   /* ---------------- LOTERÍA ---------------- */
@@ -185,14 +185,17 @@
     UI.toast(`${ok} jugadas copiadas${bad ? `, ${bad} no disponibles (sorteo cerrado o tope)` : ''}`, bad ? 'warn' : 'ok'); render();
   }
 
-  function sellLottery(print) {
+  async function sellLottery(print) {
     // revalidar todo antes de vender
     const acc = [];
     for (const l of S.lotLines) { const err = BRD.validateLotteryLine(l, me().bancaId, acc); if (err) return UI.toast(err, 'bad', 5000); acc.push(l); }
+    if (sellLottery.busy) return; sellLottery.busy = true;
     try {
-      const t = Tickets.create({ type: 'loteria', lines: S.lotLines.map(l => Object.assign({}, l, { amount: Number(l.amount) })), user: me(), shift: shift() });
+      let t = Tickets.create({ type: 'loteria', lines: S.lotLines.map(l => Object.assign({}, l, { amount: Number(l.amount) })), user: me(), shift: shift() });
+      t = await DB.confirm('tickets', t.id); // en modo servidor: el ticket solo vale si el servidor lo aprueba
       S.lotLines = []; S.lastTicket = t; render(); showTicket(t, print);
-    } catch (e) { UI.toast(e.message, 'bad'); }
+    } catch (e) { UI.toast(e.message, 'bad', 6000); render(); }
+    finally { sellLottery.busy = false; }
   }
 
   /* ---------------- DEPORTES ---------------- */
@@ -315,10 +318,15 @@
       if (b.amount > sc.maxBet) return UI.toast(`Apuesta máxima ${U.money(sc.maxBet)}`, 'warn');
       b.potential = Sports.potential(b);
     }
-    try {
-      const t = Tickets.create({ type: 'deporte', lines: bets, user: me(), shift: shift() });
-      S.legs = []; S.parlayAmt = ''; S.lastTicket = t; render(); showTicket(t, print);
-    } catch (e) { UI.toast(e.message, 'bad'); }
+    if (sellSports.busy) return; sellSports.busy = true;
+    (async () => {
+      try {
+        let t = Tickets.create({ type: 'deporte', lines: bets, user: me(), shift: shift() });
+        t = await DB.confirm('tickets', t.id);
+        S.legs = []; S.parlayAmt = ''; S.lastTicket = t; render(); showTicket(t, print);
+      } catch (e) { UI.toast(e.message, 'bad', 7000); render(); }
+      finally { sellSports.busy = false; }
+    })();
     function strip(l) { return { gameId: l.gameId, market: l.market, side: l.side, line: l.line, odds: l.odds, label: l.label }; }
   }
 
@@ -340,9 +348,9 @@
       <div class="field"><label>PIN de seguridad (impreso en el ticket)</label><input name="p" inputmode="numeric" maxlength="4"></div>
       <button class="btn pri">Buscar</button></form></div><div class="card" id="pres"><div class="empty">Escanee un ticket</div></div></div>`;
     UI.$('#pc').focus();
-    UI.$('#pf').onsubmit = e => {
+    UI.$('#pf').onsubmit = async e => {
       e.preventDefault(); const f = UI.formData(e.target);
-      const t = Tickets.byCode(f.c); const box = UI.$('#pres');
+      const t = await Tickets.lookup(f.c); const box = UI.$('#pres');
       if (!t) { box.innerHTML = '<div class="empty">❌ Ticket no encontrado</div>'; return; }
       BRD.gradeTicket(t); const cur = DB.get('tickets', t.id);
       box.innerHTML = `<div class="row between"><h3>${U.esc(cur.code)}</h3>${Tickets.statusBadge(cur.status)}</div>
@@ -355,7 +363,7 @@
       const bp = UI.$('#dopay');
       if (bp) bp.onclick = async () => {
         if (!await UI.confirm(`¿Confirmar pago de ${U.money(cur.prize)}?`)) return;
-        try { Tickets.pay(cur, me(), f.p, shift()); UI.toast('Premio pagado: ' + U.money(cur.prize)); UI.$('#pf').dispatchEvent(new Event('submit')); }
+        try { const t2 = Tickets.pay(cur, me(), f.p, shift()); await DB.confirm('tickets', t2.id); UI.toast('Premio pagado: ' + U.money(cur.prize)); UI.$('#pf').dispatchEvent(new Event('submit')); }
         catch (err) { UI.toast(err.message, 'bad', 5000); }
       };
     };
@@ -378,7 +386,7 @@
     v.querySelectorAll('[data-x]').forEach(x => x.onclick = async () => {
       const t = DB.get('tickets', x.dataset.x); const err = Tickets.canVoid(t, me()); if (err) return UI.toast(err, 'bad', 5000);
       const reason = await UI.prompt('Motivo de anulación:'); if (reason === null) return;
-      try { Tickets.void(t, me(), reason); UI.toast('Ticket anulado'); render(); } catch (e) { UI.toast(e.message, 'bad'); }
+      try { Tickets.void(t, me(), reason); await DB.confirm('tickets', t.id); UI.toast('Ticket anulado'); render(); } catch (e) { UI.toast(e.message, 'bad', 5000); render(); }
     });
   }
 
@@ -411,11 +419,11 @@
       <div class="card"><h3>Cerrar turno (cuadre)</h3><form id="cf"><div class="field"><label>Efectivo contado en caja</label><input name="d" type="number" step="0.01" required></div>
         <div class="field"><label>Nota</label><input name="n"></div><button class="btn warn">Cerrar turno</button></form></div></div>
       ${histTable(hist)}`;
-    UI.$('#ef').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); DB.put('expenses', { id: U.uid('e_'), shiftId: sh.id, bancaId: u.bancaId, userId: u.id, concept: f.c, amount: Number(f.a), at: Date.now(), date: U.today() }); DB.log('caja.gasto', `${f.c} ${f.a}`); render(); };
+    UI.$('#ef').onsubmit = async e => { e.preventDefault(); const f = UI.formData(e.target); DB.put('expenses', { id: U.uid('e_'), shiftId: sh.id, bancaId: u.bancaId, userId: u.id, concept: f.c, amount: Number(f.a), at: Date.now(), date: U.today() }); DB.log('caja.gasto', `${f.c} ${f.a}`); render(); };
     UI.$('#cf').onsubmit = async e => {
       e.preventDefault(); const f = UI.formData(e.target);
       if (!await UI.confirm('¿Cerrar el turno? No podrá vender hasta abrir uno nuevo.')) return;
-      const c = Shifts.close(sh, f.d, f.n); printShift(c); render();
+      try { const c = Shifts.close(sh, f.d, f.n); const ok = await DB.confirm('shifts', c.id); printShift(ok || c); } catch (err) { UI.toast(err.message, 'bad'); } render();
     };
     bindHist(v);
   }
@@ -468,6 +476,7 @@
   }
 
   BRD.rerender = () => render();
+  DB.on(c => { if (c === 'auth') { UI.toast('Su sesión venció. Entre de nuevo.', 'warn'); start(); } });
   /* refrescos */
   DB.on(c => {
     if (!Auth.user()) return;

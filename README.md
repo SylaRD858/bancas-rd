@@ -1,39 +1,46 @@
 # BancaRD — Sistema para bancas de lotería y deportes (RD)
 
-Aplicación web con dos módulos que comparten datos:
-
 | Módulo | Archivo | Para quién |
 |---|---|---|
-| App de venta (POS) | `pos.html` | Cajeros/vendedores: lotería, deportes, pago de premios, historial, resultados, cuadre de caja |
-| Panel de control | `control.html` | Dueño/supervisores: dashboard, bancas, staff con varias bancas, roles y permisos, inventario, pedidos de material, reportes de errores, resultados, juegos y líneas, topes, reportes, turnos, auditoría, configuración |
+| App de venta | `pos.html` | Cajeros: lotería, deportes, pago de premios, historial, resultados, cuadre, inventario, reportar errores |
+| Panel de control | `control.html` | Dueño, supervisores y oficina: bancas, staff, roles, inventario, pedidos, soporte, resultados, líneas, topes, reportes, auditoría |
 
-Usuarios de prueba: `admin/admin123`, `supervisor/super123`, `cajero1/1234`, `cajero2/1234`.
+Primer acceso: usuario **admin**. En modo local la clave inicial es `admin123`; en el servidor es la de `ADMIN_PASSWORD`
+(o `admin123` si no se define). En ambos casos se exige cambiarla al entrar.
 
-## Cómo usarlo
+## Dos modos de funcionamiento
 
-**Solo navegador (modo local):** abra `index.html` desde cualquier hosting estático (GitHub Pages, Netlify). Los datos quedan en el navegador de ese equipo.
+**Modo local** (GitHub Pages o cualquier hosting estático): todo vive en el navegador de cada equipo. Sirve para demostraciones o una sola banca.
 
-**Varias bancas conectadas (modo servidor):**
+**Modo servidor seguro** (`server/server.js`, Node 18+, sin dependencias): todas las bancas comparten datos.
+Las páginas detectan el servidor solas.
+
+- Inicio de sesión con contraseña cifrada (scrypt) y token de sesión de 12 h; bloqueo tras 5 intentos fallidos y límite de intentos por IP.
+- El servidor valida **cada** operación con el rol y las bancas del usuario: ventas (horario, topes, montos, líneas vigentes), pagos (PIN, doble pago, caducidad), anulaciones, resultados, inventario, pedidos y reportes.
+- Calificación de tickets y marcadores en el servidor; cada usuario solo recibe los datos de sus bancas; las contraseñas nunca salen del servidor.
 
 ```bash
-node server/server.js          # Node 18+, sin dependencias
-# PORT=8080 DATA_DIR=/ruta/datos node server/server.js
+node server/server.js                      # http://localhost:8080
+PORT=8080 DATA_DIR=/datos ADMIN_PASSWORD='ClaveSegura' node server/server.js
 ```
 
-Abra `http://SU-SERVIDOR:8080/` en cada banca: la app detecta `/api/ping` y sincroniza todo automáticamente (cada 8 s).
+### Almacenamiento
+- **Archivo** (por defecto): `DATA_DIR/snapshot.json` + `changes.jsonl`, respaldo automático cada hora (se guardan 72).
+- **Supabase** (gratis hasta 500 MB): defina `SUPABASE_URL` y `SUPABASE_KEY` (clave *service_role*) y ejecute `server/supabase.sql` una vez.
 
-> ⚠️ Antes de operar con dinero real: la autenticación se valida en el navegador y el servidor no autentica. Agregue autenticación del lado del servidor y HTTPS. Ver *Panel de control › Informe del sistema*.
+### Publicar
+- **Render**: conecte este repo (usa `render.yaml`). Plan gratis + Supabase, o plan Starter + disco.
+- **Docker**: `docker build -t bancard . && docker run -p 8080:8080 -v bancard:/data bancard`
+- **VPS / PC propia**: `node server/server.js` detrás de HTTPS (Caddy, Nginx o Cloudflare Tunnel).
 
 ## Estructura
-
 ```
-index.html        inicio (enlaces a venta y control)
-pos.html          punto de venta
-control.html      panel de control
-assets/core.js    datos, reglas, calificación, tickets, turnos, marcadores
-assets/pos.js     interfaz de venta
-assets/control.js interfaz de administración
-assets/shared.js  pedidos de material y reportes de errores (usado por ambas apps)
-assets/report.js  informe del sistema
-server/server.js  servidor central opcional
+index.html  pos.html  control.html
+assets/core.js      datos, reglas, permisos, calificación (lo usan navegador y servidor)
+assets/pos.js       app de venta
+assets/control.js   panel de control
+assets/shared.js    pedidos de material y reportes de errores
+assets/report.js    informe del sistema
+server/server.js    servidor seguro
+server/supabase.sql tabla para Supabase
 ```

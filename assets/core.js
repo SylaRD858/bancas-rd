@@ -6,8 +6,8 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '1.0.0';
-  const LS_KEY = 'bancard_db_v1';
+  const VERSION = '2.0.0';
+  const LS_KEY = 'bancard_db_v2';
   const SS_KEY = 'bancard_session_v1';
   const COLLS = ['config', 'bancas', 'users', 'roles', 'lotteries', 'results', 'leagues', 'games',
     'tickets', 'shifts', 'limits', 'audit', 'expenses', 'items', 'stock', 'movements', 'locations', 'requests', 'issues', 'syserrors'];
@@ -150,15 +150,11 @@
   async function seed() {
     const now = Date.now();
     DB.put('config', Object.assign({}, DEFAULT_CONFIG));
-    DB.put('bancas', { id: 'b_001', code: 'B001', name: 'Banca Principal', address: 'Av. Principal #1', zone: 'Santo Domingo', phone: '', owner: '', status: 'activa', commission: 10, dailyLimit: 0, lotteries: 'todas', sports: true, createdAt: now });
-    DB.put('bancas', { id: 'b_002', code: 'B002', name: 'Banca Los Mina', address: 'Calle 5, Los Mina', zone: 'Santo Domingo Este', phone: '', owner: '', status: 'activa', commission: 10, dailyLimit: 0, lotteries: 'todas', sports: true, createdAt: now });
-    DB.put('users', { id: 'u_admin', username: 'admin', name: 'Administrador', role: 'admin', bancaIds: [], active: true, pass: await U.sha('bancard:admin123'), mustChange: true, commission: 0, createdAt: now });
-    DB.put('users', { id: 'u_sup', username: 'supervisor', name: 'Supervisor Zona', role: 'supervisor', bancaIds: ['b_001', 'b_002'], active: true, pass: await U.sha('bancard:super123'), mustChange: true, commission: 0, createdAt: now });
-    DB.put('users', { id: 'u_caj1', username: 'cajero1', name: 'Cajero Principal', role: 'cajero', bancaIds: ['b_001'], active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
-    DB.put('users', { id: 'u_caj2', username: 'cajero2', name: 'Cajero Los Mina', role: 'cajero', bancaIds: ['b_002'], active: true, pass: await U.sha('bancard:1234'), mustChange: false, commission: 5, createdAt: now });
+    DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
+    const pw = (isServer && global.__ADMIN_PASSWORD) || 'admin123';
+    DB.put('users', { id: 'u_admin', username: 'admin', name: 'Administrador', role: 'admin', bancaIds: [], active: true, pass: isServer ? '' : await U.sha('bancard:' + pw), mustChange: true, commission: 0, createdAt: now });
     LOTTERIES.forEach((l, i) => DB.put('lotteries', { id: l[0], name: l[1], time: l[2], dayTimes: l[3] || {}, days: [0, 1, 2, 3, 4, 5, 6], closeMinutes: 5, active: true, order: i, games: { Q: true, P: true, T: true, SP: true } }));
     LEAGUES.forEach((l, i) => DB.put('leagues', { id: l[0], name: l[1], sport: l[2], espn: l[3], active: true, order: i }));
-    seedGames();
     DB.log('sistema', 'Base de datos inicializada');
   }
 
@@ -193,101 +189,164 @@
   /* ---------------- almacén ---------------- */
   const listeners = new Set();
   let state = {};
-  let serverMode = false;
+  let serverMode = false;   // conectado al servidor central seguro
+  let isServer = false;     // este código corre DENTRO del servidor (Node)
   let lastSync = 0;
   let pending = [];
+  const waiting = {};       // confirmaciones pendientes: 'c/id' -> [resolve, reject]
+  const TOKEN_KEY = 'bancard_token_v2';
 
   const DB = {
     VERSION, COLLS,
     get mode() { return serverMode ? 'servidor' : 'local'; },
+    get serverMode() { return serverMode; },
+    get isServer() { return isServer; },
+    onPut: null,            // gancho usado por el servidor para persistir
     load() {
-      try { state = JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; } catch (e) { state = {}; }
+      if (serverMode || isServer) { state = state && state.users ? state : {}; }
+      else { try { state = JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {}; } catch (e) { state = {}; } }
       COLLS.forEach(c => { if (!state[c]) state[c] = {}; });
       if (!state.__meta) state.__meta = { lastSync: 0 };
       lastSync = state.__meta.lastSync || 0;
     },
     save() {
+      if (serverMode || isServer) return; // en modo servidor la verdad está en el servidor
       state.__meta = { lastSync };
       try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) { console.warn('No se pudo guardar', e); }
     },
     isEmpty() { return !Object.keys(state.users || {}).length; },
     all(c) { return Object.values(state[c] || {}).filter(r => !r._deleted); },
     get(c, id) { const r = (state[c] || {})[id]; return r && !r._deleted ? r : null; },
+    raw(c, id) { return (state[c] || {})[id] || null; },
     find(c, fn) { return DB.all(c).filter(fn); },
     cfg() { return state.config && state.config.main; },
     put(c, rec, opts = {}) {
       if (!rec.id) rec.id = U.uid();
       rec.updatedAt = Date.now();
       state[c][rec.id] = rec;
+      if (DB.onPut) DB.onPut(c, rec);
       if (!opts.silent) { DB.save(); emit(c); }
-      if (serverMode) push(c, rec);
+      if (serverMode && !opts.local) push(c, rec);
       return rec;
+    },
+    /* el servidor reemplaza un registro con su versión oficial (no se reenvía) */
+    setLocal(c, rec, gone, id) {
+      if (!state[c]) state[c] = {};
+      if (gone) delete state[c][id]; else state[c][rec.id] = rec;
     },
     patch(c, id, changes) { const r = DB.get(c, id); if (!r) return null; return DB.put(c, Object.assign({}, r, changes)); },
     remove(c, id) { const r = state[c][id]; if (!r) return; DB.put(c, { id, _deleted: true, deletedAt: Date.now() }); },
     on(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    emit(c) { emit(c); },
     log(action, detail, extra) {
       const s = Auth.user();
-      const rec = { id: U.uid('a_'), at: Date.now(), user: s ? s.username : 'sistema', userId: s ? s.id : '', bancaId: s ? s.bancaId : '', action, detail: detail || '', extra: extra || null };
-      state.audit[rec.id] = rec; rec.updatedAt = rec.at; DB.save();
+      const rec = { id: U.uid('a_'), at: Date.now(), user: s ? s.username : 'sistema', userId: s ? s.id : '', bancaId: s ? (s.bancaId || '') : '', action, detail: String(detail || '').slice(0, 500), extra: extra || null };
+      rec.updatedAt = rec.at; state.audit[rec.id] = rec; if (DB.onPut) DB.onPut('audit', rec); DB.save();
       if (serverMode) push('audit', rec);
     },
     exportJSON() { return JSON.stringify({ app: 'BancaRD', version: VERSION, exportedAt: new Date().toISOString(), data: state }, null, 1); },
     importJSON(text) {
+      if (serverMode) throw new Error('En modo servidor los respaldos se hacen en el servidor');
       const o = JSON.parse(text); if (!o || !o.data) throw new Error('Archivo inválido');
       state = o.data; COLLS.forEach(c => { if (!state[c]) state[c] = {}; }); DB.save(); emit('*');
-      if (serverMode) COLLS.forEach(c => Object.values(state[c]).forEach(r => push(c, r)));
     },
     reset() { localStorage.removeItem(LS_KEY); state = {}; DB.load(); },
+    /* usado por el servidor */
+    serverBoot(initialState) { isServer = true; state = initialState || {}; COLLS.forEach(c => { if (!state[c]) state[c] = {}; }); },
+    state() { return state; },
     async init() {
-      DB.load();
+      if (isServer) { if (DB.isEmpty()) await seed(); migrate(); fillConfig(); return; }
       await detectServer();
-      if (DB.isEmpty()) { DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true })); await seed(); }
-      migrate();
-      if (!DB.cfg()) DB.put('config', Object.assign({}, DEFAULT_CONFIG));
-      // completar llaves nuevas de configuración
-      const cfg = DB.cfg(); let changed = false;
-      for (const k in DEFAULT_CONFIG) if (cfg[k] === undefined) { cfg[k] = DEFAULT_CONFIG[k]; changed = true; }
-      if (changed) DB.put('config', cfg);
+      if (serverMode) {
+        DB.load();
+        if (api.token()) { const ok = await pull(true); if (!ok) api.clear(); }
+        if (!DB.cfg()) await loadPublic();
+        setInterval(() => { if (api.token()) pull(); }, 6000);
+        return;
+      }
+      DB.load();
+      if (DB.isEmpty()) await seed();
+      migrate(); fillConfig();
       window.addEventListener('storage', e => { if (e.key === LS_KEY) { DB.load(); emit('*'); } });
-      if (serverMode) setInterval(pull, 8000);
     },
+    /* espera la respuesta del servidor para un registro (ventas, pagos, anulaciones) */
+    confirm(c, id) {
+      if (!serverMode) return Promise.resolve(DB.get(c, id));
+      return new Promise((res, rej) => { (waiting[c + '/' + id] = waiting[c + '/' + id] || []).push([res, rej]); clearTimeout(push.t); flush(); });
+    },
+    pull() { return pull(); },
   };
+  function fillConfig() {
+    if (!DB.cfg()) DB.put('config', Object.assign({}, DEFAULT_CONFIG));
+    const cfg = DB.cfg(); let changed = false;
+    for (const k in DEFAULT_CONFIG) if (cfg[k] === undefined) { cfg[k] = DEFAULT_CONFIG[k]; changed = true; }
+    if (changed) DB.put('config', cfg);
+  }
 
   function emit(c) { listeners.forEach(fn => { try { fn(c); } catch (e) { console.error(e); } }); }
 
-  /* ---------- sincronización con servidor opcional ---------- */
+  /* ---------- comunicación con el servidor central ---------- */
+  const api = {
+    token() { try { return sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } },
+    setToken(t) { sessionStorage.setItem(TOKEN_KEY, t); },
+    clear() { try { sessionStorage.removeItem(TOKEN_KEY); sessionStorage.removeItem(SS_KEY); } catch (e) { } },
+    async call(path, body, method) {
+      const h = { 'Content-Type': 'application/json' };
+      const t = api.token(); if (t) h.Authorization = 'Bearer ' + t;
+      try { const b = sessionStorage.getItem('bancard_pos_banca'); if (b) h['X-Banca'] = b; } catch (e) { }
+      const r = await fetch('api/' + path, { method: method || (body ? 'POST' : 'GET'), headers: h, body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+      let j = null; try { j = await r.json(); } catch (e) { }
+      if (r.status === 401 && t) { api.clear(); emit('auth'); }
+      if (!r.ok) throw new Error((j && j.error) || ('Error del servidor (' + r.status + ')'));
+      return j;
+    },
+  };
   async function detectServer() {
     if (location.protocol === 'file:') return;
     try {
       const r = await fetch('api/ping', { cache: 'no-store' });
-      if (r.ok) { const j = await r.json(); if (j && j.bancard) { serverMode = true; await pull(true); } }
+      if (r.ok) { const j = await r.json(); if (j && j.bancard && j.secure) serverMode = true; }
     } catch (e) { /* sin servidor: modo local */ }
+  }
+  async function loadPublic() {
+    try { const j = await api.call('public'); state.config.main = Object.assign({}, DEFAULT_CONFIG, j.config || {}); } catch (e) { state.config.main = Object.assign({}, DEFAULT_CONFIG); }
   }
   async function pull(first) {
     try {
-      const r = await fetch('api/changes?since=' + (first ? 0 : lastSync), { cache: 'no-store' });
-      if (!r.ok) return; const j = await r.json(); let n = 0;
-      (j.records || []).forEach(({ c, rec }) => {
-        if (!state[c]) state[c] = {};
-        const cur = state[c][rec.id];
-        if (!cur || (rec.updatedAt || 0) >= (cur.updatedAt || 0)) { state[c][rec.id] = rec; n++; }
-      });
-      lastSync = j.now || Date.now(); DB.save();
-      if (first) { // subir lo local que el servidor no tenga
-        COLLS.forEach(c => Object.values(state[c]).forEach(rec => push(c, rec)));
-      }
-      if (n) emit('*');
+      const j = await api.call('changes?since=' + (first ? 0 : lastSync));
+      let n = 0;
+      if (first) { const keep = state.config && state.config.main; state = {}; COLLS.forEach(c => state[c] = {}); if (keep) state.config.main = keep; }
+      (j.records || []).forEach(({ c, rec }) => { if (!state[c]) state[c] = {}; state[c][rec.id] = rec; n++; });
+      lastSync = j.now || Date.now();
+      if (n || first) emit('*');
       flush();
-    } catch (e) { /* desconectado */ }
+      return true;
+    } catch (e) { return false; }
   }
-  function push(c, rec) { pending.push({ c, rec }); clearTimeout(push.t); push.t = setTimeout(flush, 300); }
+  function push(c, rec) { pending.push({ c, rec }); clearTimeout(push.t); push.t = setTimeout(flush, 250); }
+  let flushing = false;
   async function flush() {
-    if (!pending.length) return; const batch = pending.splice(0, 500);
+    if (flushing) { setTimeout(flush, 200); return; }
+    if (!pending.length || !api.token()) return;
+    flushing = true; const batch = pending.splice(0, 300);
     try {
-      const r = await fetch('api/put', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ records: batch }) });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-    } catch (e) { pending = batch.concat(pending); setTimeout(flush, 5000); }
+      const j = await api.call('put', { records: batch });
+      // versiones oficiales devueltas por el servidor
+      (j.records || []).forEach(x => DB.setLocal(x.c, x.rec, x.gone, x.id));
+      const errs = [];
+      (j.results || []).forEach(r => {
+        const k = r.c + '/' + r.id; const w = waiting[k]; delete waiting[k];
+        if (r.ok) (w || []).forEach(([res]) => res(DB.get(r.c, r.id)));
+        else { (w || []).forEach(([, rej]) => rej(new Error(r.error))); if (!w && !r.silent) errs.push(r.error); }
+      });
+      if (errs.length && UI && UI.toast) UI.toast([...new Set(errs)].join(' · '), 'bad', 6000);
+      emit('*');
+    } catch (e) {
+      // sin conexión: rechaza confirmaciones (no se entrega un ticket sin servidor) y reintenta lo demás
+      const crit = new Set(['tickets', 'shifts']);
+      batch.forEach(x => { const k = x.c + '/' + x.rec.id; const w = waiting[k]; if (w) { delete waiting[k]; w.forEach(([, rej]) => rej(new Error('Sin conexión con el servidor: ' + e.message))); DB.setLocal(x.c, null, true, x.rec.id); } else if (!crit.has(x.c)) pending.push(x); });
+      setTimeout(flush, 5000); emit('*');
+    } finally { flushing = false; }
   }
 
   /* ---------------- autenticación, roles y permisos ---------------- */
@@ -342,6 +401,12 @@
     hasControl(u) { const r = Auth.role(u); return r.perms.includes('*') || r.perms.some(p => CONTROL_PERMS.includes(p)); },
     hasPos(u) { return Auth.can('pos', u); },
     async login(username, password) {
+      if (serverMode) {
+        const j = await api.call('login', { username, password });
+        api.setToken(j.token); sessionStorage.setItem(SS_KEY, JSON.stringify({ id: j.user.id, at: Date.now() })); sessionStorage.removeItem(POS_KEY);
+        await pull(true);
+        return DB.get('users', j.user.id);
+      }
       username = String(username || '').trim().toLowerCase();
       const u = DB.all('users').find(x => x.username.toLowerCase() === username);
       if (!u) throw new Error('Usuario o contraseña incorrectos');
@@ -363,8 +428,11 @@
       DB.log('login', u.username);
       return DB.get('users', u.id);
     },
-    logout() { const u = Auth.user(); if (u) DB.log('logout', u.username); sessionStorage.removeItem(SS_KEY); sessionStorage.removeItem(POS_KEY); },
-    async setPassword(userId, pw) { DB.patch('users', userId, { pass: await U.sha('bancard:' + pw), mustChange: false }); },
+    logout() { const u = Auth.user(); if (serverMode) { api.call('logout', {}).catch(() => { }); api.clear(); } else if (u) DB.log('logout', u.username); sessionStorage.removeItem(SS_KEY); sessionStorage.removeItem(POS_KEY); },
+    async setPassword(userId, pw) {
+      if (serverMode) { await new Promise(r => { clearTimeout(push.t); flush().then(r, r); }); await api.call('password', { userId, password: pw }); await pull(); return; }
+      DB.patch('users', userId, { pass: await U.sha('bancard:' + pw), mustChange: false });
+    },
     can(perm, u) {
       u = u || Auth.user(); if (!u) return false; const r = Auth.role(u);
       return r.perms.includes('*') || r.perms.includes(perm);
@@ -373,6 +441,7 @@
 
   /* migración de datos de la versión 1.0 */
   function migrate() {
+    if (serverMode) return;
     if (!DB.all('roles').length) DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
     DB.all('users').forEach(u => {
       if (!Array.isArray(u.bancaIds)) { const x = Object.assign({}, u, { bancaIds: u.bancaId ? [u.bancaId] : (u.role === 'supervisor' ? DB.all('bancas').map(b => b.id) : []) }); delete x.bancaId; DB.put('users', x, { silent: true }); }
@@ -395,9 +464,6 @@
       ['cartel', 'Cartel de resultados', 'Publicidad', 'unidad', 1, 10],
     ];
     items.forEach(([id, name, category, unit, minBanca, minCentral]) => DB.put('items', { id, name, category, unit, minBanca, minCentral, active: true }, { silent: true }));
-    // existencia inicial en almacén
-    items.forEach(([id, , , , , minCentral]) => { if (minCentral) Inv.move({ type: 'entrada', itemId: id, qty: minCentral * 2, to: 'central', note: 'Existencia inicial', silent: true }); });
-    DB.all('bancas').forEach(b => items.forEach(([id, , , , minBanca]) => { if (minBanca) Inv.move({ type: 'entrada', itemId: id, qty: minBanca + 2, to: b.id, note: 'Existencia inicial', silent: true }); }));
   }
 
   /* ---------------- inventario ---------------- */
@@ -668,6 +734,7 @@
   }
 
   function gradeTicket(t) {
+    if (serverMode) return false; // en modo servidor califica el servidor
     if (t.status !== 'pendiente') return false;
     let decided = true, prize = 0, any = false, changed = false;
     const lines = t.lines.map(l => {
@@ -701,6 +768,7 @@
   }
 
   function gradeAll() {
+    if (serverMode) return 0;
     let n = 0; const cfg = DB.cfg(); const now = Date.now();
     DB.all('tickets').forEach(t => {
       if (gradeTicket(t)) n++;
@@ -716,6 +784,7 @@
   /* ---------------- tickets ---------------- */
   const Tickets = {
     nextSerial(bancaId) {
+      if (serverMode) return 0; // lo asigna el servidor
       const b = DB.get('bancas', bancaId); const n = (b && b.serial || 0) + 1;
       if (b) DB.put('bancas', Object.assign({}, b, { serial: n }), { silent: true });
       return n;
@@ -737,6 +806,11 @@
       DB.put('tickets', t);
       DB.log('ticket.venta', `${t.code} ${U.money(t.total)}`);
       return t;
+    },
+    async lookup(code) {
+      let t = Tickets.byCode(code); if (t || !serverMode) return t;
+      try { const j = await api.call('ticket?code=' + encodeURIComponent(String(code).trim().toUpperCase())); if (j && j.ticket) { DB.setLocal('tickets', j.ticket); return j.ticket; } } catch (e) { }
+      return null;
     },
     byCode(code) {
       code = String(code || '').trim().toUpperCase();
@@ -773,9 +847,9 @@
       if (t.status === 'caducado') throw new Error('Ticket caducado (más de ' + cfg.expiryDays + ' días)');
       if (t.status === 'perdedor') throw new Error('Ticket no premiado');
       if (t.status === 'pendiente') throw new Error('Ticket aún pendiente de resultados');
-      if (cfg.requirePinToPay && !Auth.can('tickets.pay', u) && String(pin) !== String(t.pin)) throw new Error('PIN de seguridad incorrecto');
-      if (cfg.payOnlyIssuingBanca && !Auth.can('tickets.pay', u) && t.bancaId !== u.bancaId) throw new Error('Este ticket solo se paga en la banca emisora');
-      const upd = Object.assign({}, t, { status: 'pagado', paidAt: Date.now(), paidBy: u.username, paidBanca: u.bancaId, paidShift: shift ? shift.id : '' });
+      if (!serverMode && cfg.requirePinToPay && !Auth.can('tickets.pay', u) && String(pin) !== String(t.pin)) throw new Error('PIN de seguridad incorrecto');
+      if (!serverMode && cfg.payOnlyIssuingBanca && !Auth.can('tickets.pay', u) && t.bancaId !== u.bancaId) throw new Error('Este ticket solo se paga en la banca emisora');
+      const upd = Object.assign({}, t, { payPin: String(pin || ''), status: 'pagado', paidAt: Date.now(), paidBy: u.username, paidBanca: u.bancaId, paidShift: shift ? shift.id : '' });
       DB.put('tickets', upd); DB.log('ticket.pagado', `${t.code} ${U.money(t.prize)}`);
       return upd;
     },
@@ -833,7 +907,7 @@
       <div class="tk-hr"></div>
       <div class="tk-row tk-total"><span>TOTAL</span><span>${U.money(t.total)}</span></div>
       ${t.potential ? `<div class="tk-row"><span>Posible premio</span><span>${U.money(t.potential)}</span></div>` : ''}
-      <div class="tk-row"><span>PIN pago</span><b>${t.pin}</b></div>
+      <div class="tk-row"><span>PIN pago</span><b>${t.pin || '****'}</b></div>
       ${t.status === 'anulado' ? '<div class="tk-c tk-h">*** ANULADO ***</div>' : ''}
       <div class="tk-hr"></div>
       <div class="tk-c">${barcodeSVG(t.code)}</div>
@@ -939,6 +1013,7 @@
       return { imported, updated };
     },
     async refreshAll(opts = {}) {
+      if (serverMode) { const r = await api.call('scores', { ahead: !!opts.ahead, all: !!opts.all }); Scores.lastRun = Date.now(); await pull(); return r; }
       const cfg = DB.cfg(); const leagues = DB.all('leagues').filter(l => l.active && l.espn && (opts.all || (cfg.espnLeagues || []).includes(l.id)));
       let imported = 0, updated = 0, errors = 0;
       const dates = [U.addDays(U.today(), -1), U.today()].concat(opts.ahead ? [U.addDays(U.today(), 1), U.addDays(U.today(), 2)] : []);
@@ -951,6 +1026,7 @@
       return { imported, updated, errors, graded };
     },
     startAuto() {
+      if (serverMode) return; // el servidor actualiza los marcadores
       const cfg = DB.cfg(); if (!cfg.autoScores) return;
       const run = () => Scores.refreshAll().catch(() => { });
       setTimeout(run, 3000); setInterval(run, Math.max(30, cfg.scoresIntervalSec || 90) * 1000);
@@ -1043,5 +1119,5 @@
     },
   };
 
-  global.BRD = { U, DB, Auth, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, barcodeSVG, DEFAULT_CONFIG };
+  global.BRD = { U, DB, Auth, api, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, barcodeSVG, DEFAULT_CONFIG };
 })(window);

@@ -1,0 +1,24 @@
+# Render Blueprint — servidor central de BancaRD
+# Opción gratis: plan "free" + datos en Supabase (SUPABASE_URL / SUPABASE_KEY).
+# Opción pagada: plan "starter" + disco persistente (descomente "disk" y borre las variables de Supabase).
+services:
+  - type: web
+    name: bancard
+    runtime: node
+    plan: free
+    buildCommand: "echo sin dependencias"
+    startCommand: node server/server.js
+    healthCheckPath: /api/ping
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+    # disk:
+    #   name: datos
+    #   mountPath: /data
+    #   sizeGB: 1

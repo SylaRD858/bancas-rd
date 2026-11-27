@@ -105,7 +105,13 @@
     const pct = (a, b) => b ? ((a - b) / b * 100).toFixed(0) + '%' : '—';
     act.innerHTML = `<button class="btn sm" id="rfs">↻ Actualizar marcadores</button>`;
     UI.$('#rfs').onclick = async () => { const r = await Scores.refreshAll({ ahead: true }); UI.toast(`Marcadores: ${r.updated} act., ${r.imported} nuevos, ${r.graded} tickets calificados${r.errors ? ', ' + r.errors + ' errores' : ''}`, r.errors ? 'warn' : 'ok'); render(); };
-    v.innerHTML = `<div class="grid g4">
+    const onboarding = Auth.can('bancas.edit') && !DB.all('bancas').length ? `<div class="card" style="border-color:var(--ac);margin-bottom:12px"><h3>👋 Primeros pasos</h3><ol>
+      <li><a href="#config">Configuración</a>: nombre del consorcio, RNC, premios y reglas.</li>
+      <li><a href="#bancas">Bancas</a>: cree su primera banca o punto de venta.</li>
+      <li><a href="#staff">Staff</a>: cree cajeros, encargados y supervisores, y asígneles sus bancas.</li>
+      <li><a href="#loterias">Loterías y horarios</a>: confirme las horas de cada sorteo.</li>
+      <li><a href="#inventario">Existencias</a>: registre la entrada inicial de material en el almacén.</li></ol></div>` : '';
+    v.innerHTML = onboarding + `<div class="grid g4">
       <div class="card kpi ok"><div class="l">Ventas hoy</div><div class="v">${U.money(R.ventas)}</div><small>Ayer ${U.money(yest.ventas)} (${pct(R.ventas, yest.ventas)})</small></div>
       <div class="card kpi bad"><div class="l">Premios generados</div><div class="v">${U.money(R.premios)}</div><small>Pagados ${U.money(R.pagados)} · Por pagar ${U.money(R.pendPago)}</small></div>
       <div class="card kpi ${R.neto >= 0 ? 'ok' : 'bad'}"><div class="l">Neto (ventas − premios − comisiones)</div><div class="v">${U.money(R.neto)}</div><small>Comisiones ${U.money(R.comision)}</small></div>
@@ -152,8 +158,8 @@
       ${t.status === 'pendiente' && Auth.can('tickets.void') ? '<button class="btn bad" id="vd">Anular</button>' : ''}
       ${t.status === 'ganador' && Auth.can('tickets.pay') ? '<button class="btn pri" id="py">Marcar pagado</button>' : ''}</div></div></div>`, { wide: true });
     m.querySelector('#pr').onclick = () => BRD.printTicket(t);
-    const vd = m.querySelector('#vd'); if (vd) vd.onclick = async () => { const r = await UI.prompt('Motivo de anulación:'); if (r === null) return; try { Tickets.void(t, u, r); UI.closeModal(); UI.toast('Anulado'); render(); } catch (e) { UI.toast(e.message, 'bad'); } };
-    const py = m.querySelector('#py'); if (py) py.onclick = async () => { if (!await UI.confirm('¿Marcar como pagado ' + U.money(t.prize) + '?')) return; try { Tickets.pay(t, u, t.pin, null); UI.closeModal(); UI.toast('Pagado'); render(); } catch (e) { UI.toast(e.message, 'bad'); } };
+    const vd = m.querySelector('#vd'); if (vd) vd.onclick = async () => { const r = await UI.prompt('Motivo de anulación:'); if (r === null) return; try { Tickets.void(t, u, r); await DB.confirm('tickets', t.id); UI.closeModal(); UI.toast('Anulado'); render(); } catch (e) { UI.toast(e.message, 'bad'); } };
+    const py = m.querySelector('#py'); if (py) py.onclick = async () => { if (!await UI.confirm('¿Marcar como pagado ' + U.money(t.prize) + '?')) return; try { Tickets.pay(t, u, t.pin, null); await DB.confirm('tickets', t.id); UI.closeModal(); UI.toast('Pagado'); render(); } catch (e) { UI.toast(e.message, 'bad'); } };
   }
 
   /* ======================= REPORTES ======================= */
@@ -222,17 +228,17 @@
       if (row.querySelectorAll('.rn')[0].value === '' || [...row.querySelectorAll('.rn')].some(i => i.value.length === 0)) return UI.toast('Complete los 3 números', 'warn');
       const key = id + '_' + d; const prev = DB.get('results', key);
       if (prev && !await UI.confirm('Ya existe un resultado. Corregirlo recalculará los tickets no pagados. ¿Continuar?')) return;
-      if (prev) { // reabrir tickets no pagados de ese sorteo para recalificar
+      if (prev && !DB.serverMode) { // reabrir tickets no pagados de ese sorteo para recalificar (en modo servidor lo hace el servidor)
         DB.all('tickets').filter(t => t.type === 'loteria' && t.date === d && ['ganador', 'perdedor'].includes(t.status) && t.lines.some(l => l.lot === id || l.lot2 === id))
           .forEach(t => DB.put('tickets', Object.assign({}, t, { status: 'pendiente', prize: 0, lines: t.lines.map(l => (l.lot === id || l.lot2 === id) ? Object.assign({}, l, { result: null, prize: 0 }) : l) }), { silent: true }));
       }
       DB.put('results', { id: key, lot: id, date: d, n1: vals.n1, n2: vals.n2, n3: vals.n3, by: Auth.user().username, at: Date.now() });
       DB.log(prev ? 'resultado.corregido' : 'resultado.ingresado', `${Lot.name(id)} ${d}: ${vals.n1}-${vals.n2}-${vals.n3}`);
-      const n = BRD.gradeAll(); UI.toast(`Resultado guardado · ${n} tickets calificados`); render();
+      try { await DB.confirm('results', key); const n = BRD.gradeAll(); UI.toast(DB.serverMode ? 'Resultado guardado; el servidor calificó los tickets' : `Resultado guardado · ${n} tickets calificados`); } catch (err) { UI.toast(err.message, 'bad'); } render();
     });
     v.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
       const id = b.dataset.del; if (!await UI.confirm('¿Borrar el resultado? Los tickets no pagados volverán a pendiente.')) return;
-      DB.all('tickets').filter(t => t.type === 'loteria' && t.date === d && ['ganador', 'perdedor'].includes(t.status) && t.lines.some(l => l.lot === id || l.lot2 === id))
+      if (!DB.serverMode) DB.all('tickets').filter(t => t.type === 'loteria' && t.date === d && ['ganador', 'perdedor'].includes(t.status) && t.lines.some(l => l.lot === id || l.lot2 === id))
         .forEach(t => DB.put('tickets', Object.assign({}, t, { status: 'pendiente', prize: 0, lines: t.lines.map(l => (l.lot === id || l.lot2 === id) ? Object.assign({}, l, { result: null, prize: 0 }) : l) }), { silent: true }));
       DB.remove('results', id + '_' + d); DB.log('resultado.borrado', `${Lot.name(id)} ${d}`); BRD.gradeAll(); render();
     });
@@ -474,7 +480,8 @@
       const rec = Object.assign({}, u, { name: f.name, username: f.username, role: f.role, bancaIds, cedula: f.cedula, phone: f.phone, commission: Number(f.commission) || 0, active: f.active });
       delete rec.bancaId;
       if (isNew) { rec.id = U.uid('u_'); rec.pass = await U.sha('bancard:' + f.pw); rec.mustChange = Auth.hasControl(rec); rec.createdAt = Date.now(); }
-      DB.put('users', rec); DB.log(isNew ? 'usuario.creado' : 'usuario.editado', `${rec.username} (${role.name}) bancas: ${bancaIds.map(id => (DB.get('bancas', id) || {}).code).join(',')}`); UI.closeModal(); render();
+      DB.put('users', rec);
+      if (DB.serverMode) { try { await DB.confirm('users', rec.id); if (isNew) await Auth.setPassword(rec.id, f.pw); } catch (err) { return UI.toast(err.message, 'bad', 6000); } } DB.log(isNew ? 'usuario.creado' : 'usuario.editado', `${rec.username} (${role.name}) bancas: ${bancaIds.map(id => (DB.get('bancas', id) || {}).code).join(',')}`); UI.closeModal(); render();
     };
   }
 
@@ -594,6 +601,7 @@
   }
   /* ======================= SOPORTE / ERRORES ======================= */
   BRD.rerender = () => render();
+  DB.on(c => { if (c === 'auth') { UI.toast('Su sesión venció. Entre de nuevo.', 'warn'); start(); } });
   function soporte(v, act) {
     const sc = Auth.scope(); const canM = Auth.can('issues.manage'); const u = Auth.user();
     const f = soporte.f || { st: 'abiertos', cat: '', b: '' };
@@ -693,6 +701,7 @@
     UI.$('#imp').onchange = async e => { const file = e.target.files[0]; if (!file) return; if (!await UI.confirm('Esto reemplaza TODOS los datos actuales. ¿Continuar?')) return; const r = new FileReader(); r.onload = () => { try { DB.importJSON(r.result); UI.toast('Respaldo restaurado'); render(); } catch (err) { UI.toast(err.message, 'bad'); } }; r.readAsText(file); };
     UI.$('#rst').onclick = async () => { if (await UI.prompt('Escriba BORRAR para eliminar todos los datos de este navegador') !== 'BORRAR') return; DB.reset(); Auth.logout(); location.reload(); };
     UI.$('#demo').onclick = demoSales;
+    if (DB.serverMode) { ['#demo', '#rst'].forEach(x => { const el = UI.$(x); if (el) el.remove(); }); const im = UI.$('#imp'); if (im) im.parentElement.remove(); }
   }
 
   /* ventas simuladas para probar reportes */
