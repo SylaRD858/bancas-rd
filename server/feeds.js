@@ -10,7 +10,7 @@ const SOURCES = [
   { id: 'cn', name: 'conectate.com.do', url: 'https://www.conectate.com.do/loterias/' },
 ];
 if (process.env.FEEDS_SOURCES) { try { SOURCES.splice(0, SOURCES.length, ...JSON.parse(process.env.FEEDS_SOURCES)); } catch (e) { console.error('FEEDS_SOURCES inválido'); } }
-const UA = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36', 'Accept-Language': 'es-DO,es;q=0.9' };
+const UA = { 'User-Agent': 'AuraSport/3.1 (resultados para bancas; servidor)', 'Accept': 'text/html', 'Accept-Language': 'es-DO,es;q=0.9' };
 
 const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/&amp;/g, '&').replace(/<[^>]+>/g, ' ').replace(/[^a-z0-9:+&\/ ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -28,7 +28,7 @@ function mapLottery(text) {
   }
   if (has(/king/)) return has(/7:30|noche| 7 /) ? 'king_noche' : has(/12:30|dia| 12 /) ? 'king_dia' : null;
   if (has(/primera/)) return has(/noche|7:00|8:00| 7 /) ? 'primera_noche' : has(/dia|12|medio|manana/) ? 'primera_dia' : null;
-  if (has(/suerte/)) return has(/tarde|6:00| 6 /) ? 'suerte_tarde' : has(/12|md|dia|medio/) ? 'suerte_md' : null;
+  if (has(/suerte/)) return has(/tarde|18:00|6:00| 6 /) ? 'suerte_tarde' : has(/12|md|dia|medio/) ? 'suerte_md' : null;
   if (has(/florida/)) return has(/noche|9:45|10:45/) ? 'florida_noche' : has(/dia|tarde|1:30|2:30|medio/) ? 'florida_dia' : null;
   if (has(/new ?york|nueva york| ny /)) return has(/noche|10:30|11:30/) ? 'ny_noche' : has(/tarde|medio|3:30|2:30|dia/) ? 'ny_tarde' : null;
   if (has(/gana mas|ganamas/)) return 'gana_mas';
@@ -80,7 +80,9 @@ function create({ BRD, DB, log, resetTicketsFor }) {
   }
 
   async function readSource(src, today) {
-    const st = status.lottery.sources[src.id] = Object.assign(status.lottery.sources[src.id] || {}, { name: src.name, at: Date.now() });
+    const st = status.lottery.sources[src.id] = Object.assign(status.lottery.sources[src.id] || {}, { name: src.name });
+    if (st.pausedUntil && Date.now() < st.pausedUntil) return null;
+    st.at = Date.now();
     try {
       const html = await fetchText(src.url);
       const blocks = parseBlocks(html); const found = {};
@@ -95,7 +97,11 @@ function create({ BRD, DB, log, resetTicketsFor }) {
       if (!blocks.length) st.sample = html.replace(/\s+/g, ' ').slice(0, 1500);
       else delete st.sample;
       return found;
-    } catch (e) { Object.assign(st, { ok: false, error: e.message }); return null; }
+    } catch (e) {
+      Object.assign(st, { ok: false, error: e.message });
+      if (/HTTP (401|403|429)/.test(e.message)) { st.pausedUntil = Date.now() + 6 * 3600000; st.error = e.message + ' — la fuente no permite consultas automáticas; en pausa'; }
+      return null;
+    }
   }
 
   async function lotteries() {
