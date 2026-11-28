@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AuraSport — Resultados de loterías y deportes</title><meta name="theme-color" content="#0a1330">
+<meta name="description" content="Resultados de las loterías dominicanas y marcadores deportivos al momento.">
+<link rel="apple-touch-icon" href="assets/icon-192.png"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="assets/icon-192.png">
+<link rel="stylesheet" href="assets/style.css?v=311">
+<style>body{padding:0 14px 30px}.wrap{max-width:1300px;margin:auto}#board{min-height:70vh}</style>
+</head><body><div class="wrap">
+<div class="pub-top"><img src="assets/logo.webp" alt="AuraSport"><div style="text-align:right"><b>Resultados al momento</b><br><a href="pos.html">Ir a la venta</a> · <a href="control.html">Panel</a></div></div>
+<div id="board"></div>
+<p class="small mut" style="text-align:center;margin-top:20px">Los resultados se actualizan solos. Verifique siempre con su ticket en la banca.</p>
+</div>
+<script src="assets/results.js?v=311"></script>
+<script>
+  // modo pantalla de banca: ?tv=1 rota entre loterías y deportes
+  const tv = /[?&]tv=1/.test(location.search);
+  const board = AuraResults.mount(document.getElementById('board'), { interval: 20000 });
+  if (tv) setInterval(() => { const s = board.state; s.tab = s.tab === 'loterias' ? 'deportes' : 'loterias'; board.reload(); }, 30000);
+</script>
+</body></html>

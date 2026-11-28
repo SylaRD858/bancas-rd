@@ -273,7 +273,7 @@ function applyPut(u, c, rec) {
       ['n1', 'n2', 'n3'].forEach(k => { if (!/^\d{2}$/.test(rec[k])) deny('Los números deben tener 2 dígitos'); });
       if (rec.date > U.today()) deny('No se pueden ingresar resultados de fechas futuras');
       if (cur && (cur.n1 !== rec.n1 || cur.n2 !== rec.n2 || cur.n3 !== rec.n3)) resetTicketsFor(rec.lot, rec.date);
-      return { put: { id: rec.id, lot: rec.lot, date: rec.date, n1: rec.n1, n2: rec.n2, n3: rec.n3, by: u.username, at: now }, regrade: true };
+      return { put: { id: rec.id, lot: rec.lot, date: rec.date, n1: rec.n1, n2: rec.n2, n3: rec.n3, by: u.username, at: now, source: 'manual' }, regrade: true };
     }
     if (c === 'games') {
       if (del) { const exp = DB.all('tickets').some(t => t.type === 'deporte' && t.status !== 'anulado' && t.lines.some(l => l.legs.some(x => x.gameId === rec.id))); if (exp) deny('El juego tiene jugadas vendidas: márquelo cancelado'); return { put: { id: rec.id, _deleted: true } }; }
@@ -515,7 +515,8 @@ function body(req) {
   });
 }
 
-let lastScores = 0;
+let lastScores = 0; const boardCache = new Map();
+const feeds = require('./feeds').create({ BRD, DB, log: (...a) => console.error(...a), resetTicketsFor: (lot, date) => resetTicketsFor(lot, date) });
 /* índice de cambios por tiempo: la sincronización no recorre toda la base cada vez */
 const changeLog = []; // { t, c, id } en orden de tiempo
 function noteChange(c, rec) { changeLog.push({ t: rec.updatedAt || Date.now(), c, id: rec.id }); if (changeLog.length > 400000) changeLog.splice(0, 100000); }
@@ -529,6 +530,30 @@ function changesSince(since) {
 async function handleApi(req, res, url) {
   const p = url.pathname.slice(5); const ip = ipOf(req);
   if (p === 'ping') return send(res, 200, { bancard: true, secure: true, version: DB.VERSION, now: Date.now(), uptime: Math.round(process.uptime()), mem: Math.round(process.memoryUsage().rss / 1048576) });
+  if (p === 'board' || p === 'board/history' || p === 'feeds') {
+    if (!rateOk('board:' + ip, 120, 60000)) return send(res, 429, { error: 'Demasiadas consultas' });
+    if (p === 'feeds') return send(res, 200, { now: Date.now(), autoResults: (DB.cfg() || {}).autoResults !== false, ...feeds.status });
+    if (p === 'board/history') {
+      const lot = str(url.searchParams.get('lot'), 40); const days = Math.min(120, Math.max(1, num(url.searchParams.get('days') || 30)));
+      const from = U.addDays(U.today(), -days);
+      const list = DB.all('results').filter(r => r.lot === lot && r.date >= from).sort((a, b) => b.date.localeCompare(a.date)).map(r => ({ date: r.date, n1: r.n1, n2: r.n2, n3: r.n3 }));
+      return send(res, 200, { lot, days, results: list });
+    }
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : U.today();
+    const ck = 'b:' + date; const hit = boardCache.get(ck);
+    if (hit && Date.now() - hit.at < 8000) return send(res, 200, hit.data);
+    const c = DB.cfg() || {};
+    const data = {
+      now: Date.now(), today: U.today(), date, company: 'AuraSport', timezone: c.timezone,
+      lotteries: BRD.Lot.list().filter(l => l.active !== false).map(l => ({ id: l.id, name: l.name, company: l.company || 'otras', time: BRD.Lot.timeFor(l, date), plays: BRD.Lot.playsOn(l, date), logo: l.logo || '', logoSrc: l.logoSrc || '' })),
+      results: Object.fromEntries(DB.all('results').filter(r => r.date === date).map(r => [r.lot, { n1: r.n1, n2: r.n2, n3: r.n3, at: r.at, source: r.source || 'manual' }])),
+      leagues: DB.all('leagues').filter(l => l.active !== false).sort((a, b) => (a.order || 0) - (b.order || 0)).map(l => ({ id: l.id, name: l.name, sport: l.sport, logo: l.logo || '', logoSrc: l.logoSrc || '' })),
+      games: DB.all('games').filter(g => g.date === date && g.status !== 'cancelado').sort((a, b) => a.start - b.start).map(g => ({ id: g.id, league: g.league, away: g.away, home: g.home, start: g.start, status: g.status, scoreAway: g.scoreAway, scoreHome: g.scoreHome, period: g.period || '', awayLogo: g.awayLogo || '', homeLogo: g.homeLogo || '', awayAbbr: g.awayAbbr || '', homeAbbr: g.homeAbbr || '', awayRec: g.awayRec || '', homeRec: g.homeRec || '', venue: g.venue || '' })),
+      feeds: { lottery: feeds.status.lottery.lastOk, sports: feeds.status.sports.lastRun },
+    };
+    boardCache.set(ck, { at: Date.now(), data }); if (boardCache.size > 60) boardCache.delete(boardCache.keys().next().value);
+    return send(res, 200, data);
+  }
   if (p === 'public') { const c = DB.cfg() || {}; return send(res, 200, { config: { company: c.company, currency: c.currency, timezone: c.timezone } }); }
   if (p === 'login' && req.method === 'POST') {
     if (!rateOk('login:' + ip, 10, 5 * 60000)) return send(res, 429, { error: 'Demasiados intentos. Espere unos minutos.' });
@@ -606,6 +631,12 @@ async function handleApi(req, res, url) {
       return send(res, 200, { ticket: sanitize(me, 'tickets', DB.get('tickets', t.id)) });
     });
   }
+  if (p === 'feeds/run' && req.method === 'POST') {
+    if (!Auth.can('results', u) && !Auth.can('games', u)) return send(res, 403, { error: 'Sin permiso' });
+    if (!rateOk('feedrun', 6, 60000)) return send(res, 429, { error: 'Espere un momento' });
+    await Promise.all([feeds.lotteries(), feeds.sports(true)]); boardCache.clear();
+    return send(res, 200, { ok: true, status: feeds.status });
+  }
   if (p === 'scores' && req.method === 'POST') {
     const b = await body(req);
     if (Date.now() - lastScores < 20000) return send(res, 200, { imported: 0, updated: 0, errors: 0, graded: 0, note: 'Actualizado hace poco' });
@@ -680,7 +711,7 @@ const server = http.createServer(async (req, res) => {
     console.log('Usuario inicial: admin / ' + (process.env.ADMIN_PASSWORD ? '(valor de ADMIN_PASSWORD)' : 'admin123') + '  -> se pedirá cambiarla al entrar');
   }
   setInterval(() => { try { BRD.gradeAll(); } catch (e) { console.error('grade', e.message); } }, 30000);
-  BRD.Scores.startAuto();
+  feeds.start();
   server.listen(PORT, () => console.log(`AuraSport seguro en http://localhost:${PORT}  ·  datos: ${store.describe()}`));
   const bye = () => { try { store.flush && store.flush(); } catch (e) { } process.exit(0); };
   process.on('SIGTERM', bye); process.on('SIGINT', bye);

@@ -6,7 +6,7 @@
 (function (global) {
   'use strict';
 
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.0';
   const LS_KEY = 'bancard_db_v2';
   const SS_KEY = 'bancard_session_v1';
   const COLLS = ['config', 'consorcios', 'bancas', 'users', 'roles', 'lotteries', 'results', 'leagues', 'games',
@@ -100,7 +100,7 @@
     lotMin: 5,
     maxLine: { Q: 1000, P: 200, T: 50, SP: 200 },
     sports: { minBet: 50, maxBet: 20000, maxPayout: 500000, minParlay: 2, maxParlay: 8, closeMinutes: 0 },
-    autoScores: true,
+    autoScores: true, autoResults: true,
     scoresIntervalSec: 90,
     espnLeagues: ['nba', 'nfl', 'nhl', 'ncaab', 'epl', 'laliga', 'ucl', 'mls', 'mlb'],
     createdAt: Date.now(),
@@ -145,6 +145,19 @@
     ['ufc', 'UFC / Boxeo', 'combate', 'mma/ufc'],
   ];
 
+  /* empresa de cada lotería (para agrupar y mostrar logos) */
+  const LOT_COMPANY = { anguila_10: 'anguila', anguila_1: 'anguila', anguila_6: 'anguila', anguila_9: 'anguila', primera_dia: 'primera', primera_noche: 'primera', suerte_md: 'suerte', suerte_tarde: 'suerte',
+    king_dia: 'king', king_noche: 'king', real: 'real', florida_dia: 'florida', florida_noche: 'florida', lotedom: 'lotedom', gana_mas: 'nacional', nacional: 'nacional', ny_tarde: 'newyork', ny_noche: 'newyork', loteka: 'loteka', leidsa: 'leidsa' };
+  const COMPANIES = {
+    nacional: { name: 'Lotería Nacional', color: '#0a5c36', short: 'LN' }, leidsa: { name: 'Leidsa', color: '#0b4ea2', short: 'LE' }, loteka: { name: 'Loteka', color: '#e4002b', short: 'LK' },
+    real: { name: 'Lotería Real', color: '#6b2fa0', short: 'LR' }, primera: { name: 'La Primera', color: '#f39200', short: 'LP' }, suerte: { name: 'La Suerte', color: '#00a19a', short: 'LS' },
+    lotedom: { name: 'LoteDom', color: '#c8102e', short: 'LD' }, anguila: { name: 'Anguila', color: '#1d71b8', short: 'AN' }, king: { name: 'King Lottery', color: '#b8860b', short: 'KL' },
+    florida: { name: 'Florida', color: '#ff7a00', short: 'FL' }, newyork: { name: 'New York', color: '#1f2a44', short: 'NY' }, otras: { name: 'Otras', color: '#64748b', short: '★' },
+  };
+  /* logos públicos de ESPN para las ligas (el servidor los actualiza desde el marcador) */
+  const LEAGUE_LOGOS = { mlb: 'https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png', nba: 'https://a.espncdn.com/i/teamlogos/leagues/500/nba.png', nfl: 'https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png', nhl: 'https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png',
+    epl: 'https://a.espncdn.com/i/leaguelogos/soccer/500/23.png', laliga: 'https://a.espncdn.com/i/leaguelogos/soccer/500/15.png', ucl: 'https://a.espncdn.com/i/leaguelogos/soccer/500/2.png', mls: 'https://a.espncdn.com/i/leaguelogos/soccer/500/19.png' };
+
   const SPORT_NAMES = { beisbol: 'Béisbol', baloncesto: 'Baloncesto', futbol_americano: 'Fútbol Americano', hockey: 'Hockey', futbol: 'Fútbol', combate: 'Combate', otro: 'Otro' };
   const SPORT_ICON = { beisbol: '⚾', baloncesto: '🏀', futbol_americano: '🏈', hockey: '🏒', futbol: '⚽', combate: '🥊', otro: '🎯' };
 
@@ -154,8 +167,8 @@
     DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
     const pw = (isServer && global.__ADMIN_PASSWORD) || 'admin123';
     DB.put('users', { id: 'u_admin', username: 'admin', name: 'Administrador', role: 'admin', bancaIds: [], active: true, pass: isServer ? '' : await U.sha('bancard:' + pw), mustChange: true, commission: 0, createdAt: now });
-    LOTTERIES.forEach((l, i) => DB.put('lotteries', { id: l[0], name: l[1], time: l[2], dayTimes: l[3] || {}, days: [0, 1, 2, 3, 4, 5, 6], closeMinutes: 5, active: true, order: i, games: { Q: true, P: true, T: true, SP: true } }));
-    LEAGUES.forEach((l, i) => DB.put('leagues', { id: l[0], name: l[1], sport: l[2], espn: l[3], active: true, order: i }));
+    LOTTERIES.forEach((l, i) => DB.put('lotteries', { id: l[0], name: l[1], time: l[2], dayTimes: l[3] || {}, days: [0, 1, 2, 3, 4, 5, 6], closeMinutes: 5, active: true, order: i, company: LOT_COMPANY[l[0]] || 'otras', games: { Q: true, P: true, T: true, SP: true } }));
+    LEAGUES.forEach((l, i) => DB.put('leagues', { id: l[0], name: l[1], sport: l[2], espn: l[3], active: true, order: i, logoSrc: LEAGUE_LOGOS[l[0]] || '', feed: l[0] === 'lidom' ? 'mlb-winter' : '' }));
     DB.log('sistema', 'Base de datos inicializada');
   }
 
@@ -466,6 +479,9 @@
   function migrate() {
     if (serverMode) return;
     if (!DB.all('roles').length) DEFAULT_ROLES.forEach(r => DB.put('roles', Object.assign({}, r), { silent: true }));
+    // v3.1: empresa y logos para el tablero de resultados
+    DB.all('lotteries').forEach(l => { if (!l.company) DB.put('lotteries', Object.assign({}, l, { company: LOT_COMPANY[l.id] || 'otras' }), { silent: true }); });
+    DB.all('leagues').forEach(l => { const ch = {}; if (l.logoSrc === undefined && LEAGUE_LOGOS[l.id]) ch.logoSrc = LEAGUE_LOGOS[l.id]; if (l.id === 'lidom' && !l.feed) ch.feed = 'mlb-winter'; if (Object.keys(ch).length) DB.put('leagues', Object.assign({}, l, ch), { silent: true }); });
     DEFAULT_ROLES.forEach(r => { if (!DB.get('roles', r.id)) DB.put('roles', Object.assign({}, r), { silent: true }); });
     const ra = DB.get('roles', 'admin'); if (ra && ra.name === 'Administrador') DB.put('roles', Object.assign({}, ra, { name: DEFAULT_ROLES[0].name, desc: DEFAULT_ROLES[0].desc }), { silent: true });
     DB.all('users').forEach(u => {
@@ -1051,6 +1067,8 @@
       const url = `https://site.api.espn.com/apis/site/v2/sports/${lg.espn}/scoreboard?dates=${d}`;
       const r = await fetch(url); if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json(); let imported = 0, updated = 0;
+      const ll = j.leagues && j.leagues[0] && j.leagues[0].logos && j.leagues[0].logos[0] && j.leagues[0].logos[0].href;
+      if (ll && lg.logoSrc !== ll) DB.put('leagues', Object.assign({}, lg, { logoSrc: ll }), { silent: true });
       (j.events || []).forEach(ev => {
         const comp = ev.competitions && ev.competitions[0]; if (!comp) return;
         const home = comp.competitors.find(c => c.homeAway === 'home'), away = comp.competitors.find(c => c.homeAway === 'away');
@@ -1066,6 +1084,8 @@
           scoreAway: away.score != null && status !== 'programado' ? Number(away.score) : null,
           scoreHome: home.score != null && status !== 'programado' ? Number(home.score) : null,
           period: st.shortDetail || st.detail || '', source: 'espn', extId: 'espn:' + ev.id,
+          awayLogo: away.team.logo || '', homeLogo: home.team.logo || '', awayAbbr: away.team.abbreviation || '', homeAbbr: home.team.abbreviation || '',
+          awayRec: ((away.records || [])[0] || {}).summary || '', homeRec: ((home.records || [])[0] || {}).summary || '', venue: (comp.venue && comp.venue.fullName) || '',
         };
         const odds = parseEspnOdds((comp.odds && comp.odds[0]) || null);
         if (!g) {
@@ -1074,7 +1094,7 @@
         } else {
           const upd = Object.assign({}, g);
           let changed = false;
-          if (!g.manualScore && (g.status !== base.status || g.scoreAway !== base.scoreAway || g.scoreHome !== base.scoreHome || g.period !== base.period || g.start !== base.start)) { Object.assign(upd, base); changed = true; }
+          if (!g.manualScore && (g.status !== base.status || g.scoreAway !== base.scoreAway || g.scoreHome !== base.scoreHome || g.period !== base.period || g.start !== base.start || g.homeLogo !== base.homeLogo || g.awayRec !== base.awayRec)) { Object.assign(upd, base); changed = true; }
           // líneas: se actualizan mientras el juego no ha empezado y no estén bloqueadas
           if (odds && !g.oddsLocked && base.status === 'programado' && JSON.stringify(odds) !== JSON.stringify(g.odds)) { upd.odds = odds; changed = true; }
           if (changed) { DB.put('games', upd, { silent: true }); updated++; }
@@ -1082,13 +1102,36 @@
       });
       return { imported, updated };
     },
+    /* LIDOM y otras ligas de invierno: API pública de MLB (sportId 17) */
+    async fetchWinter(leagueId, dateStr) {
+      const d = dateStr || U.today(); let imported = 0, updated = 0;
+      const r = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=17&startDate=${d}&endDate=${d}&hydrate=team,linescore`); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json(); const DOM = /dominican|licey|escogido|aguilas|águilas|toros|estrellas|gigantes/i;
+      (j.dates || []).forEach(dd => (dd.games || []).forEach(gm => {
+        const h = gm.teams.home, a = gm.teams.away; const lgName = ((h.team.league || {}).name || '') + ' ' + h.team.name + ' ' + a.team.name;
+        if (!DOM.test(lgName)) return;
+        const st = gm.status || {}; const ds = st.detailedState || '';
+        const status = /postpon|cancel|suspend/i.test(ds) ? 'suspendido' : st.abstractGameState === 'Final' ? 'final' : st.abstractGameState === 'Live' ? 'en_vivo' : 'programado';
+        const start = new Date(gm.gameDate).getTime(); const p = U.parts(new Date(start)); const ls = gm.linescore || {};
+        const base = { league: leagueId, away: a.team.name, home: h.team.name, date: p.date, time: U.pad2(p.h) + ':' + U.pad2(p.m), start, status,
+          scoreAway: status === 'programado' || a.score == null ? null : Number(a.score), scoreHome: status === 'programado' || h.score == null ? null : Number(h.score),
+          period: status === 'en_vivo' && ls.currentInningOrdinal ? (ls.inningHalf === 'Top' ? '▲ ' : '▼ ') + ls.currentInningOrdinal : ds, source: 'mlb', extId: 'mlb:' + gm.gamePk,
+          awayLogo: `https://www.mlbstatic.com/team-logos/${a.team.id}.svg`, homeLogo: `https://www.mlbstatic.com/team-logos/${h.team.id}.svg`, awayAbbr: a.team.abbreviation || '', homeAbbr: h.team.abbreviation || '',
+          awayRec: a.leagueRecord ? a.leagueRecord.wins + '-' + a.leagueRecord.losses : '', homeRec: h.leagueRecord ? h.leagueRecord.wins + '-' + h.leagueRecord.losses : '', venue: (gm.venue || {}).name || '' };
+        const g = DB.all('games').find(x => x.extId === base.extId);
+        if (!g) { DB.put('games', Object.assign({ id: U.uid('g_'), odds: {}, oddsLocked: false }, base), { silent: true }); imported++; }
+        else if (!g.manualScore && ['status', 'scoreAway', 'scoreHome', 'period', 'start', 'awayRec'].some(k => g[k] !== base[k])) { DB.put('games', Object.assign({}, g, base), { silent: true }); updated++; }
+      }));
+      return { imported, updated };
+    },
+    async refreshLeague(l, d) { return l.feed === 'mlb-winter' ? Scores.fetchWinter(l.id, d) : Scores.fetchLeague(l.id, d); },
     async refreshAll(opts = {}) {
       if (serverMode) { const r = await api.call('scores', { ahead: !!opts.ahead, all: !!opts.all }); Scores.lastRun = Date.now(); await pull(); return r; }
-      const cfg = DB.cfg(); const leagues = DB.all('leagues').filter(l => l.active && l.espn && (opts.all || (cfg.espnLeagues || []).includes(l.id)));
+      const cfg = DB.cfg(); const leagues = DB.all('leagues').filter(l => l.active && (l.espn || l.feed) && (opts.all || l.feed || (cfg.espnLeagues || []).includes(l.id)));
       let imported = 0, updated = 0, errors = 0;
       const dates = [U.addDays(U.today(), -1), U.today()].concat(opts.ahead ? [U.addDays(U.today(), 1), U.addDays(U.today(), 2)] : []);
       for (const l of leagues) for (const d of dates) {
-        try { const r = await Scores.fetchLeague(l.id, d); imported += r.imported; updated += r.updated; }
+        try { const r = await Scores.refreshLeague(l, d); imported += r.imported; updated += r.updated; }
         catch (e) { errors++; Scores.lastError = e.message; }
       }
       Scores.lastRun = Date.now();
@@ -1096,7 +1139,7 @@
       return { imported, updated, errors, graded };
     },
     startAuto() {
-      if (serverMode) return; // el servidor actualiza los marcadores
+      if (serverMode || isServer) return; // el servidor tiene su propio programador (server/feeds.js)
       const cfg = DB.cfg(); if (!cfg.autoScores) return;
       const run = () => Scores.refreshAll().catch(() => { });
       setTimeout(run, 3000); setInterval(run, Math.max(30, cfg.scoresIntervalSec || 90) * 1000);
@@ -1189,5 +1232,5 @@
     },
   };
 
-  global.BRD = { U, DB, Auth, api, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, printHTML, barcodeSVG, DEFAULT_CONFIG };
+  global.BRD = { U, DB, Auth, api, Inv, Requests, Issues, captureErrors, Lot, Sports, Tickets, Shifts, Scores, Reports, UI, KIND_NAMES, parsePlay, validateLotteryLine, gradeAll, gradeTicket, ticketHTML, ticketText, printTicket, printHTML, barcodeSVG, COMPANIES, LOT_COMPANY, LEAGUE_LOGOS, SPORT_NAMES, SPORT_ICON, DEFAULT_CONFIG };
 })(window);

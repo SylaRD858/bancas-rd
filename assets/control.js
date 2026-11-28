@@ -348,12 +348,13 @@
   function resultados(v) {
     const d = resultados.d || U.today();
     const lots = Lot.list();
-    v.innerHTML = `<div class="card"><div class="row"><label style="margin:0">Fecha del sorteo</label><input type="date" id="rd" value="${d}" style="width:auto">${Docs.buttons('res')}<span class="small">Ingrese 1ra, 2da y 3ra (2 dígitos). Al guardar se califican automáticamente todos los tickets.</span></div></div>
+    v.innerHTML = `<div class="card" id="feedst" style="margin-bottom:12px"><b>🛰️ Resultados automáticos</b> <span class="mut small">${DB.mode === 'servidor' ? 'consultando estado…' : 'Disponible cuando el sistema funciona con el servidor central.'}</span> <a class="btn sm" href="resultados.html" target="_blank" style="float:right">📺 Ver tablero público</a></div><div class="card"><div class="row"><label style="margin:0">Fecha del sorteo</label><input type="date" id="rd" value="${d}" style="width:auto">${Docs.buttons('res')}<span class="small">Ingrese 1ra, 2da y 3ra (2 dígitos). Al guardar se califican automáticamente todos los tickets.</span></div></div>
       <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Lotería</th><th>Hora</th><th>1ra</th><th>2da</th><th>3ra</th><th>Vendido</th><th>Premios</th><th></th></tr></thead><tbody>
-      ${lots.map(l => { const r = DB.get('results', l.id + '_' + d); const st = soldPrize(l.id, d); return `<tr data-row="${l.id}"><td><b>${U.esc(l.name)}</b>${Lot.playsOn(l, d) ? '' : '<br><small>No juega este día</small>'}</td><td>${U.hhmm12(Lot.timeFor(l, d))}</td>
+      ${lots.map(l => { const r = DB.get('results', l.id + '_' + d); const st = soldPrize(l.id, d); return `<tr data-row="${l.id}"><td><b>${U.esc(l.name)}</b>${r ? `<br><small class="${r.source === 'auto' ? 'ok' : 'mut'}">${r.source === 'auto' ? '🛰️ automático · ' + U.esc(r.srcName || '') : '✍️ manual · ' + U.esc(r.by || '')} ${r.at ? U.time(r.at) : ''}</small>` : ''}${Lot.playsOn(l, d) ? '' : '<br><small>No juega este día</small>'}</td><td>${U.hhmm12(Lot.timeFor(l, d))}</td>
         ${['n1', 'n2', 'n3'].map(k => `<td><input class="rn" data-k="${k}" maxlength="2" inputmode="numeric" value="${r ? r[k] : ''}" style="width:58px;text-align:center;font-weight:700"></td>`).join('')}
         <td class="num">${U.money(st.sold)}</td><td class="num">${r ? U.money(st.prize) : ''}</td><td><div class="row"><button class="btn sm pri" data-save="${l.id}">Guardar</button>${r ? `<button class="btn sm ghost" data-del="${l.id}">Borrar</button>` : ''}</div>${r ? `<small>por ${U.esc(r.by)} ${U.time(r.at)}</small>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
     UI.$('#rd').onchange = e => { resultados.d = e.target.value; render(); };
+    if (DB.mode === 'servidor') feedStatus(UI.$('#feedst'));
     Docs.bind(v, 'res', () => ({ title: 'Resultados de lotería', subtitle: U.d(d), sections: [{ columns: [{ h: 'Lotería', w: 2.5 }, { h: 'Hora' }, { h: '1ra', align: 'right' }, { h: '2da', align: 'right' }, { h: '3ra', align: 'right' }, { h: 'Vendido', w: 1.3, align: 'right' }, { h: 'Premios', w: 1.3, align: 'right' }],
       rows: lots.filter(l => Lot.playsOn(l, d)).map(l => { const r = DB.get('results', l.id + '_' + d) || {}; const st = soldPrize(l.id, d); return [l.name, U.hhmm12(Lot.timeFor(l, d)), r.n1 || '—', r.n2 || '—', r.n3 || '—', U.money(st.sold), r.n1 ? U.money(st.prize) : '']; }) }] }), () => 'resultados_' + d);
     v.querySelectorAll('.rn').forEach(i => i.oninput = () => { i.value = i.value.replace(/\D/g, '').slice(0, 2); if (i.value.length === 2) { const all = UI.$$('.rn'); const nx = all[all.indexOf(i) + 1]; if (nx) nx.focus(); } });
@@ -455,10 +456,30 @@
   }
   function leaguesModal() {
     const ls = DB.all('leagues').sort((a, b) => a.order - b.order);
-    const m = UI.modal('Ligas', `<table><thead><tr><th>Liga</th><th>Deporte</th><th>ESPN</th><th>Activa</th></tr></thead><tbody>${ls.map(l => `<tr><td>${U.esc(l.name)}</td><td>${Sports.SPORT_NAMES[l.sport]}</td><td><small>${U.esc(l.espn || '—')}</small></td><td><input type="checkbox" data-la="${l.id}" ${l.active ? 'checked' : ''}></td></tr>`).join('')}</tbody></table>
+    const m = UI.modal('Ligas', `<table><thead><tr><th>Logo</th><th>Liga</th><th>Deporte</th><th>Fuente automática</th><th>Activa</th></tr></thead><tbody>${ls.map(l => `<tr><td><label style="cursor:pointer;margin:0" title="Cambiar logo">${BRD.Results.logo(l.logo || l.logoSrc, l.name.slice(0, 2).toUpperCase(), '#475569', 34)}<input type="file" accept="image/*" data-ll="${l.id}" hidden></label>${l.logo ? `<button class="btn sm ghost" data-lr="${l.id}" title="Quitar logo propio">×</button>` : ''}</td><td>${U.esc(l.name)}</td><td>${Sports.SPORT_NAMES[l.sport]}</td><td><small>${l.feed === 'mlb-winter' ? 'MLB (ligas de invierno)' : l.espn ? 'ESPN · ' + U.esc(l.espn) : '— manual'}</small></td><td><input type="checkbox" data-la="${l.id}" ${l.active ? 'checked' : ''}></td></tr>`).join('')}</tbody></table>
+      <p class="small mut">Haga clic en un logo para subir uno propio.</p>
       <hr><form id="nl" class="row"><input name="n" placeholder="Nueva liga" required style="flex:2"><select name="s" style="flex:1">${Object.entries(Sports.SPORT_NAMES).map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select><button class="btn">Agregar</button></form>`, { wide: true });
     m.querySelectorAll('[data-la]').forEach(c => c.onchange = () => DB.patch('leagues', c.dataset.la, { active: c.checked }));
+    m.querySelectorAll('[data-ll]').forEach(i => i.onchange = async () => { try { DB.patch('leagues', i.dataset.ll, { logo: await BRD.Brand.readLogo(i.files[0]) }); leaguesModal(); } catch (err) { UI.toast(err.message, 'bad'); } });
+    m.querySelectorAll('[data-lr]').forEach(b => b.onclick = () => { DB.patch('leagues', b.dataset.lr, { logo: '' }); leaguesModal(); });
     m.querySelector('#nl').onsubmit = e => { e.preventDefault(); const f = UI.formData(e.target); DB.put('leagues', { id: U.uid('l_'), name: f.n, sport: f.s, espn: '', active: true, order: 99 }); leaguesModal(); };
+  }
+
+  /* estado de las fuentes automáticas (loterías y deportes) */
+  async function feedStatus(box) {
+    let st; try { st = await (await fetch('api/feeds', { cache: 'no-store' })).json(); } catch (e) { box.querySelector('.mut').textContent = 'No se pudo consultar el estado.'; return; }
+    const ago = t => t ? (Math.round((Date.now() - t) / 60000) + ' min') : 'nunca';
+    const src = Object.values((st.lottery || {}).sources || {});
+    const lg = Object.entries((st.sports || {}).leagues || {});
+    const can = Auth.can('config');
+    box.innerHTML = `<div class="row" style="justify-content:space-between"><b>🛰️ Resultados automáticos</b><div class="row"><a class="btn sm" href="resultados.html" target="_blank">📺 Ver tablero público</a>${Auth.can('results') ? '<button class="btn sm pri" id="frun">Actualizar ahora</button>' : ''}</div></div>
+      <div class="grid g2" style="margin-top:8px"><div><small class="mut">LOTERÍAS</small><br>${st.autoResults ? '<span class="badge b-ok">Activado</span>' : '<span class="badge b-bad">Desactivado</span>'} · última lectura hace ${ago(st.lottery.lastOk)} · publicados desde el arranque: <b>${st.lottery.published}</b>
+        <div class="small" style="margin-top:4px">${src.map(x => `${x.ok ? '🟢' : '🔴'} ${U.esc(x.name)}: ${x.ok ? `${x.matched || 0} loterías leídas` : U.esc(x.error || 'sin respuesta')}`).join('<br>') || 'Aún no se ha consultado.'}</div>
+        ${can ? `<label class="chk" style="margin-top:6px"><input type="checkbox" id="fauto" ${st.autoResults ? 'checked' : ''}> Publicar resultados automáticamente (nunca reemplaza los ingresados a mano)</label>` : ''}</div>
+      <div><small class="mut">DEPORTES</small><br>última actualización hace ${ago(st.sports.lastRun)}<div class="small" style="margin-top:4px">${lg.map(([k, x]) => `${x.ok ? '🟢' : '🔴'} ${U.esc((DB.get('leagues', k) || {}).name || k)}${x.ok ? '' : ': ' + U.esc(x.error || '')}`).join(' · ') || '—'}</div></div></div>
+      <p class="small mut" style="margin:8px 0 0">Un resultado automático se publica solo cuando se confirma dos veces (dos lecturas seguidas o dos fuentes iguales). Si corrige un número a mano, queda como manual y el sistema no lo vuelve a cambiar.</p>`;
+    const fr = box.querySelector('#frun'); if (fr) fr.onclick = async () => { fr.disabled = true; fr.textContent = 'Consultando…'; try { await BRD.api.call('feeds/run', {}); await BRD.DB.pull(); UI.toast('Fuentes consultadas'); } catch (e) { UI.toast(e.message, 'bad'); } render(); };
+    const fa = box.querySelector('#fauto'); if (fa) fa.onchange = () => { DB.put('config', Object.assign({}, DB.cfg(), { autoResults: fa.checked })); DB.log('config', 'Resultados automáticos ' + (fa.checked ? 'activados' : 'desactivados')); setTimeout(() => feedStatus(box), 1500); };
   }
 
   /* ======================= LÍMITES ======================= */
@@ -809,7 +830,7 @@
     const list = Lot.list(); const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
     act.innerHTML = '<button class="btn sm pri" id="nl">+ Nueva lotería</button>';
     v.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>Lotería</th><th>Hora sorteo</th><th>Hora especial por día</th><th>Cierre antes</th><th>Días</th><th>Jugadas</th><th>Estado hoy</th><th>Activa</th><th></th></tr></thead><tbody>
-      ${list.map(l => `<tr><td><b>${U.esc(l.name)}</b></td><td>${U.hhmm12(l.time)}</td><td class="small">${Object.entries(l.dayTimes || {}).map(([d, t]) => DAYS[d] + ' ' + U.hhmm12(t)).join(', ') || '—'}</td><td>${Lot.closeMins(l)} min</td><td class="small">${(l.days || []).length === 7 ? 'Todos' : (l.days || []).map(d => DAYS[d]).join(' ')}</td><td class="small">${Object.entries(l.games || {}).filter(([, on]) => on).map(([k]) => KIND_NAMES[k]).join(', ')}</td><td>${Lot.status(l).label}</td><td><input type="checkbox" data-a="${l.id}" ${l.active ? 'checked' : ''}></td><td><button class="btn sm" data-e="${l.id}">Editar</button></td></tr>`).join('')}</tbody></table></div>
+      ${list.map(l => `<tr><td><div class="row" style="flex-wrap:nowrap">${BRD.Results.logo(l.logo || l.logoSrc, (BRD.COMPANIES[l.company] || BRD.COMPANIES.otras).short, (BRD.COMPANIES[l.company] || BRD.COMPANIES.otras).color, 34)}<span><b>${U.esc(l.name)}</b><br><small>${U.esc((BRD.COMPANIES[l.company] || BRD.COMPANIES.otras).name)}</small></span></div></td><td>${U.hhmm12(l.time)}</td><td class="small">${Object.entries(l.dayTimes || {}).map(([d, t]) => DAYS[d] + ' ' + U.hhmm12(t)).join(', ') || '—'}</td><td>${Lot.closeMins(l)} min</td><td class="small">${(l.days || []).length === 7 ? 'Todos' : (l.days || []).map(d => DAYS[d]).join(' ')}</td><td class="small">${Object.entries(l.games || {}).filter(([, on]) => on).map(([k]) => KIND_NAMES[k]).join(', ')}</td><td>${Lot.status(l).label}</td><td><input type="checkbox" data-a="${l.id}" ${l.active ? 'checked' : ''}></td><td><button class="btn sm" data-e="${l.id}">Editar</button></td></tr>`).join('')}</tbody></table></div>
       <p class="small">Los horarios por defecto son referenciales; verifíquelos con cada lotería y ajústelos aquí. La venta se cierra automáticamente X minutos antes del sorteo.</p>`;
     v.querySelectorAll('[data-a]').forEach(c => c.onchange = () => { DB.patch('lotteries', c.dataset.a, { active: c.checked }); DB.log('loteria.estado', c.dataset.a + ' ' + c.checked); });
     v.querySelectorAll('[data-e]').forEach(b => b.onclick = () => lotForm(DB.get('lotteries', b.dataset.e)));
@@ -819,13 +840,18 @@
       const m = UI.modal(isNew ? 'Nueva lotería' : 'Editar ' + U.esc(l.name), `<form id="lf"><div class="grid g2">
         <div class="field"><label>Nombre</label><input name="name" value="${U.esc(l.name)}" required></div>
         <div class="field"><label>Hora del sorteo</label><input name="time" type="time" value="${l.time}" required></div>
-        <div class="field"><label>Cerrar venta (minutos antes)</label><input name="closeMinutes" type="number" min="0" value="${l.closeMinutes}"></div><div></div></div>
+        <div class="field"><label>Cerrar venta (minutos antes)</label><input name="closeMinutes" type="number" min="0" value="${l.closeMinutes}"></div>
+        <div class="field"><label>Empresa (para agrupar en resultados)</label><select name="company">${Object.entries(BRD.COMPANIES).map(([k, c]) => `<option value="${k}" ${(l.company || 'otras') === k ? 'selected' : ''}>${U.esc(c.name)}</option>`).join('')}</select></div></div>
+        <label>Logo</label><div class="logo-box" style="margin-bottom:10px"><span id="llp">${BRD.Results.logo(l.logo || l.logoSrc, '?', '#64748b', 56)}</span><label class="btn sm" style="margin:0">Subir logo propio<input type="file" id="llf" accept="image/*" hidden></label><button type="button" class="btn sm ghost" id="llr">Usar el automático</button><small class="mut">${l.logoSrc ? 'Hay logo automático de la fuente de resultados.' : ''}</small></div>
         <label>Días que juega / hora especial (vacío = hora normal)</label><div class="grid g4">${DAYS.map((d, i) => `<div><label class="chk"><input type="checkbox" name="d${i}" ${l.days.includes(i) ? 'checked' : ''}> ${d}</label><input type="time" name="t${i}" value="${(l.dayTimes || {})[i] || ''}"></div>`).join('')}</div>
         <label style="margin-top:10px">Jugadas permitidas</label><div class="row">${['Q', 'P', 'T', 'SP'].map(k => `<label class="chk"><input type="checkbox" name="g${k}" ${l.games[k] !== false ? 'checked' : ''}> ${KIND_NAMES[k]}</label>`).join('')}</div>
         <button class="btn pri">Guardar</button></form>`, { wide: true });
+      let llogo = l.logo || '';
+      m.querySelector('#llf').onchange = async e => { try { llogo = await BRD.Brand.readLogo(e.target.files[0]); m.querySelector('#llp').innerHTML = BRD.Results.logo(llogo, '?', '#64748b', 56); } catch (err) { UI.toast(err.message, 'bad'); } };
+      m.querySelector('#llr').onclick = () => { llogo = ''; m.querySelector('#llp').innerHTML = BRD.Results.logo(l.logoSrc, '?', '#64748b', 56); };
       m.querySelector('#lf').onsubmit = e => {
         e.preventDefault(); const f = UI.formData(e.target);
-        const rec = Object.assign({}, l, { name: f.name, time: f.time, closeMinutes: Number(f.closeMinutes) || 0, days: DAYS.map((_, i) => f['d' + i] ? i : -1).filter(i => i >= 0), dayTimes: {}, games: { Q: f.gQ, P: f.gP, T: f.gT, SP: f.gSP } });
+        const rec = Object.assign({}, l, { logo: llogo, company: f.company || 'otras', name: f.name, time: f.time, closeMinutes: Number(f.closeMinutes) || 0, days: DAYS.map((_, i) => f['d' + i] ? i : -1).filter(i => i >= 0), dayTimes: {}, games: { Q: f.gQ, P: f.gP, T: f.gT, SP: f.gSP } });
         DAYS.forEach((_, i) => { if (f['t' + i]) rec.dayTimes[i] = f['t' + i]; });
         if (!rec.id) rec.id = U.uid('lot_');
         DB.put('lotteries', rec); DB.log(isNew ? 'loteria.creada' : 'loteria.editada', rec.name + ' ' + rec.time); UI.closeModal(); render();

@@ -66,6 +66,7 @@
     tick();
     const v = UI.$('#view');
     if (!sh && (S.tab === 'loteria' || S.tab === 'deporte' || S.tab === 'pagar')) return viewNoShift(v);
+    if (S.tab !== 'resultados' && viewResults.board) { viewResults.board.destroy(); viewResults.board = null; }
     (({ loteria: viewLottery, deporte: viewSports, pagar: viewPay, tickets: viewTickets, resultados: viewResults, caja: viewCash, inventario: viewInventory, soporte: viewSupport })[S.tab] || viewLottery)(v);
   }
 
@@ -393,13 +394,9 @@
 
   /* ---------------- RESULTADOS ---------------- */
   function viewResults(v) {
-    const d = viewResults.date || U.today();
-    const lots = Lot.list();
-    const games = DB.all('games').filter(g => g.date === d).sort((a, b) => a.start - b.start);
-    v.innerHTML = `<div class="row" style="margin-bottom:10px"><label style="margin:0">Fecha</label><input type="date" id="rd" value="${d}" style="width:auto"></div>
-      <div class="grid g2"><div class="card"><h3>Loterías</h3><table><tbody>${lots.map(l => { const r = DB.get('results', l.id + '_' + d); return `<tr><td><b>${U.esc(l.name)}</b><br><small>${U.hhmm12(Lot.timeFor(l, d))}</small></td><td>${r ? `<span class="ball">${r.n1}</span><span class="ball b2">${r.n2}</span><span class="ball b3">${r.n3}</span>` : '<span class="mut">Pendiente</span>'}</td></tr>`; }).join('')}</tbody></table></div>
-      <div class="card"><h3>Marcadores</h3>${games.length ? `<table><tbody>${games.map(g => `<tr><td><small>${U.time(g.start)} · ${U.esc((DB.get('leagues', g.league) || {}).name || '')}</small><br>${U.esc(g.away)}<br>${U.esc(g.home)}</td><td class="num score">${g.scoreAway != null && g.status !== 'programado' ? g.scoreAway + '<br>' + g.scoreHome : ''}</td><td>${g.status === 'en_vivo' ? '<span class="badge b-live">En vivo</span>' : `<span class="badge">${g.status}</span>`}<br><small>${U.esc(g.period || '')}</small></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sin juegos</div>'}</div></div>`;
-    UI.$('#rd').onchange = e => { viewResults.date = e.target.value; render(); };
+    if (viewResults.board) viewResults.board.destroy();
+    v.innerHTML = '<div id="rbx"></div><p class="small mut" style="margin-top:10px">Pantalla para clientes: <a href="resultados.html?tv=1" target="_blank">abrir tablero de resultados</a></p>';
+    viewResults.board = BRD.Results.mount(v.querySelector('#rbx'), { state: viewResults.state, onState: s => { viewResults.state = { date: s.date, tab: s.tab, comp: s.comp, league: s.league }; } });
   }
 
   /* ---------------- CAJA ---------------- */
@@ -478,7 +475,7 @@
     if (!Auth.user()) return;
     const a = document.activeElement; if (a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA')) return;
     if (document.getElementById('modal')) return;
-    if (['tickets', 'results', 'games', 'lotteries', 'config', '*', 'requests', 'issues', 'stock'].includes(c) && ['resultados', 'tickets', 'deporte', 'caja', 'inventario', 'soporte'].includes(S.tab)) render();
+    if ((['tickets', 'results', 'games', 'lotteries', 'config', '*', 'requests', 'issues', 'stock'].includes(c) && ['tickets', 'deporte', 'caja', 'inventario', 'soporte'].includes(S.tab) || (S.tab === 'resultados' && viewResults.board && ['results', 'games'].includes(c) && (viewResults.board.reload(), false)))) render();
   });
   setInterval(() => { // estados de cierre de loterías
     if (S.tab === 'loteria' && Auth.user() && !document.getElementById('modal')) {

@@ -1,7 +1,12 @@
 /* Informe del sistema — se muestra en Panel de Control › Informe */
 window.BRD = window.BRD || {};
 BRD.REPORT_HTML = `
-<h2>Informe del sistema AuraSport v3.0</h2>
+<h2>Informe del sistema AuraSport v3.1</h2>
+<h3>Novedades v3.1 — Resultados</h3><ul>
+<li><b>Tablero de resultados</b> (resultados.html, público, y pestaña Resultados en la venta): navegación por fecha, por empresa de lotería y por liga; logos; historial de 60 días por lotería; números que más salen y números atrasados; marcadores en vivo, próximos y finalizados con logos de los equipos. Con <code>?tv=1</code> alterna solo entre loterías y deportes (para la pantalla de la banca).</li>
+<li><b>Resultados automáticos de lotería:</b> el servidor lee páginas públicas de resultados cada 2 minutos durante los sorteos (cada 20 minutos el resto del día). Solo publica cuando el resultado se confirma dos veces y nunca cambia uno ingresado a mano. Se puede apagar en Resultados lotería.</li>
+<li><b>Marcadores automáticos:</b> ESPN (MLB, NBA, NFL, NHL, NCAA, fútbol, UFC) cada minuto cuando hay juegos en vivo; <b>LIDOM</b> desde la API pública de MLB.</li>
+<li>Logos propios por lotería y por liga desde el panel.</li></ul>
 <h3>Novedades v3.0</h3><ul>
 <li><b>Consorcios:</b> nueva capa superior. La plataforma crea el consorcio y luego sus bancas y empleados. Cada consorcio solo ve lo suyo (bancas, staff, tickets, inventario, topes). El rol <b>Administrador de consorcio</b> maneja todo su consorcio; resultados, juegos, loterías y configuración general quedan en la plataforma.</li>
 <li><b>Marca:</b> logo del consorcio aplicado a sus bancas, recibos e informes; cada banca puede tener su logo propio. Paquete de 11 temas de color (por consorcio, por banca y por equipo).</li>
